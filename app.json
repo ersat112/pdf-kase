@@ -1,44 +1,83 @@
 {
   "expo": {
-    "name": "pdf-kase",
+    "name": "PDF Kaşe",
     "slug": "pdf-kase",
     "version": "1.0.0",
-    "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "orientation": "default",
     "scheme": "pdfkase",
     "userInterfaceStyle": "automatic",
+    "icon": "./assets/images/icon.png",
+    "newArchEnabled": true,
     "ios": {
-      "icon": "./assets/expo.icon"
+      "bundleIdentifier": "com.ersatbulbul.pdfkase",
+      "icon": "./assets/images/icon.png",
+      "requireFullScreen": true
     },
     "android": {
+      "package": "com.ersatbulbul.pdfkase",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
-      },
-      "predictiveBackGestureEnabled": false
+        "monochromeImage": "./assets/images/android-icon-monochrome.png",
+        "backgroundColor": "#0B0F14"
+      }
     },
     "web": {
-      "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
-      "expo-router",
+      [
+        "expo-dev-client",
+        {
+          "launchMode": "most-recent"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Belgeleri seçmek için galeri erişimi gerekiyor.",
+          "cameraPermission": "Fotoğraf çekmek için kamera erişimi gerekiyor.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "QR kodu okutmak ve kamera araçlarını kullanmak için kamera erişimi gerekiyor.",
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": true
+        }
+      ],
+      [
+        "react-native-document-scanner-plugin",
+        {
+          "cameraPermission": "Belgeleri taramak için kamera erişimi gerekiyor."
+        }
+      ],
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-3940256099942544~3347511713",
+          "iosAppId": "ca-app-pub-3940256099942544~1458002511",
+          "delayAppMeasurementInit": true,
+          "userTrackingUsageDescription": "Reklam deneyimini iyileştirmek için cihaz tanımlayıcısı kullanılabilir."
+        }
+      ],
+      [
+        "expo-screen-orientation",
+        {
+          "initialOrientation": "DEFAULT"
+        }
+      ],
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
-          "android": {
-            "image": "./assets/images/splash-icon.png",
-            "imageWidth": 76
-          }
+          "backgroundColor": "#0B0F14",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 160
         }
-      ]
-    ],
-    "experiments": {
-      "typedRoutes": true,
-      "reactCompiler": true
-    }
+      ],
+      "react-native-pdf-jsi"
+    ]
   }
 }

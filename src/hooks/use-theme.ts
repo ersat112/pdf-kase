@@ -1,14 +1,51 @@
-/**
- * Learn more about light and dark modes:
- * https://docs.expo.dev/guides/color-schemes/
- */
-
-import { Colors } from '@/constants/theme';
+// src/hooks/use-theme.ts
+import {
+  Colors,
+  Fonts,
+  FontSizes,
+  FontWeights,
+  Layout,
+  LineHeights,
+  Radius,
+  Shadows,
+  Spacing,
+  Typography,
+  type AppThemeColors,
+  type AppThemeName,
+} from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
-export function useTheme() {
-  const scheme = useColorScheme();
-  const theme = scheme === 'unspecified' ? 'light' : scheme;
+export type UseThemeResult = {
+  themeName: AppThemeName;
+  isDark: boolean;
+  colors: AppThemeColors;
+  fonts: typeof Fonts;
+  fontSizes: typeof FontSizes;
+  fontWeights: typeof FontWeights;
+  lineHeights: typeof LineHeights;
+  typography: typeof Typography;
+  spacing: typeof Spacing;
+  radius: typeof Radius;
+  layout: typeof Layout;
+  shadows: typeof Shadows;
+};
 
-  return Colors[theme];
+export function useTheme(): UseThemeResult {
+  const scheme = useColorScheme();
+  const themeName: AppThemeName = scheme === 'dark' ? 'dark' : 'light';
+
+  return {
+    themeName,
+    isDark: themeName === 'dark',
+    colors: Colors[themeName],
+    fonts: Fonts,
+    fontSizes: FontSizes,
+    fontWeights: FontWeights,
+    lineHeights: LineHeights,
+    typography: Typography,
+    spacing: Spacing,
+    radius: Radius,
+    layout: Layout,
+    shadows: Shadows,
+  };
 }
