@@ -51,6 +51,19 @@ export type SignatureOverlayPayload = {
   opacity?: number;
 };
 
+export type SignatureAssetOverlayPayload = {
+  documentId: number;
+  pageId: number;
+  assetId: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  strokeColor?: string;
+  rotation?: number;
+  opacity?: number;
+};
+
 export type UpdateOverlayTransformPayload = {
   overlayId: number;
   x: number;
@@ -169,6 +182,19 @@ function buildSignatureOverlayContent(
   });
 }
 
+function buildSignatureAssetOverlayContent(
+  assetId: number,
+  strokeColor?: string,
+) {
+  const normalizedColor = normalizeSignatureColor(strokeColor);
+
+  return JSON.stringify({
+    assetId,
+    strokeColor: normalizedColor,
+    color: normalizedColor,
+  });
+}
+
 function normalizeOverlayFrame(input: {
   x: number;
   y: number;
@@ -259,11 +285,22 @@ async function assertPageBelongsToDocument(pageId: number, documentId: number) {
   }
 }
 
-async function assertAssetExists(assetId: number) {
+async function assertAssetExists(
+  assetId: number,
+  expectedType?: 'stamp' | 'signature',
+) {
   const asset = await getAssetById(assetId);
 
   if (!asset) {
-    throw new Error('Seçilen kaşe görseli bulunamadı.');
+    throw new Error('Seçilen görsel bulunamadı.');
+  }
+
+  if (expectedType && asset.type !== expectedType) {
+    throw new Error(
+      expectedType === 'signature'
+        ? 'Seçilen imza görseli bulunamadı.'
+        : 'Seçilen kaşe görseli bulunamadı.',
+    );
   }
 
   return asset;
@@ -358,7 +395,7 @@ export async function addStampOverlay(payload: StampOverlayPayload) {
 
   await assertDocumentExists(payload.documentId);
   await assertPageBelongsToDocument(payload.pageId, payload.documentId);
-  await assertAssetExists(payload.assetId);
+  await assertAssetExists(payload.assetId, 'stamp');
 
   const db = await getDb();
   const now = new Date().toISOString();
@@ -467,6 +504,77 @@ export async function addSignatureOverlay(payload: SignatureOverlayPayload) {
 
   if (!row?.id) {
     throw new Error('İmza kaydedilemedi.');
+  }
+
+  await markDocumentDirty(payload.documentId);
+
+  return row.id;
+}
+
+export async function addSignatureAssetOverlay(
+  payload: SignatureAssetOverlayPayload,
+) {
+  if (!isPositiveInteger(payload.documentId)) {
+    throw new Error('Geçerli belge bilgisi gerekli.');
+  }
+
+  if (!isPositiveInteger(payload.pageId)) {
+    throw new Error('Geçerli sayfa bilgisi gerekli.');
+  }
+
+  if (!isPositiveInteger(payload.assetId)) {
+    throw new Error('Geçerli imza bilgisi gerekli.');
+  }
+
+  const normalizedFrame = normalizeOverlayFrame({
+    x: payload.x,
+    y: payload.y,
+    width: payload.width,
+    height: payload.height,
+  });
+
+  await assertDocumentExists(payload.documentId);
+  await assertPageBelongsToDocument(payload.pageId, payload.documentId);
+  await assertAssetExists(payload.assetId, 'signature');
+
+  const db = await getDb();
+  const now = new Date().toISOString();
+
+  await db.runAsync(
+    `
+      INSERT INTO overlay_items (
+        document_id,
+        page_id,
+        type,
+        x,
+        y,
+        width,
+        height,
+        rotation,
+        opacity,
+        content,
+        created_at
+      )
+      VALUES (?, ?, 'signature', ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    payload.documentId,
+    payload.pageId,
+    normalizedFrame.x,
+    normalizedFrame.y,
+    normalizedFrame.width,
+    normalizedFrame.height,
+    normalizeRotation(payload.rotation),
+    clamp01(payload.opacity ?? 1),
+    buildSignatureAssetOverlayContent(payload.assetId, payload.strokeColor),
+    now,
+  );
+
+  const row = await db.getFirstAsync<{ id: number }>(
+    'SELECT last_insert_rowid() AS id',
+  );
+
+  if (!row?.id) {
+    throw new Error('Hazır imza kaydedilemedi.');
   }
 
   await markDocumentDirty(payload.documentId);
@@ -587,7 +695,7 @@ export async function replaceStampOverlayAsset(payload: ReplaceStampOverlayAsset
     throw new Error('Sadece kaşe overlay asset değişimi destekleniyor.');
   }
 
-  await assertAssetExists(payload.assetId);
+  await assertAssetExists(payload.assetId, 'stamp');
 
   const db = await getDb();
 

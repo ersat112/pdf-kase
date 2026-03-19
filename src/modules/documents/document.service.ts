@@ -18,6 +18,7 @@ import {
   getDocumentOverlays,
   getOverlaySignatureColor,
 } from '../overlays/overlay.service';
+import { generateImportedPdfThumbnail } from '../pdf/pdf-thumbnail.service';
 import {
   buildPdfFromImages,
   type PdfOverlay,
@@ -509,7 +510,11 @@ async function createDocumentRow(title: string) {
   };
 }
 
-async function createImportedPdfDocumentRow(title: string, pdfPath: string) {
+async function createImportedPdfDocumentRow(
+  title: string,
+  pdfPath: string,
+  thumbnailPath: string | null,
+) {
   const db = await getDb();
   const now = new Date().toISOString();
 
@@ -523,10 +528,11 @@ async function createImportedPdfDocumentRow(title: string, pdfPath: string) {
         created_at,
         updated_at
       )
-      VALUES (?, 'ready', ?, NULL, ?, ?)
+      VALUES (?, 'ready', ?, ?, ?, ?)
     `,
     title,
     pdfPath,
+    thumbnailPath,
     now,
     now,
   );
@@ -677,9 +683,31 @@ async function createDocumentFromImportedPdf(
 
   sourceFile.copy(destinationFile);
 
+  let thumbnailPath: string | null = null;
+
   try {
     const title = buildDocumentTitleFromFileName(input.name);
-    const { documentId } = await createImportedPdfDocumentRow(title, destinationFile.uri);
+
+    try {
+      thumbnailPath = await generateImportedPdfThumbnail({
+        pdfUri: destinationFile.uri,
+        pageNumber: 1,
+        scale: 1.4,
+        prefix: 'pdf-thumb',
+      });
+    } catch (thumbnailError) {
+      console.warn(
+        '[DocumentService] Imported PDF thumbnail generation failed:',
+        thumbnailError,
+      );
+      thumbnailPath = null;
+    }
+
+    const { documentId } = await createImportedPdfDocumentRow(
+      title,
+      destinationFile.uri,
+      thumbnailPath,
+    );
 
     return {
       documentId,
@@ -687,6 +715,11 @@ async function createDocumentFromImportedPdf(
     };
   } catch (error) {
     await removeFileIfExists(destinationFile.uri);
+
+    if (thumbnailPath) {
+      await removeFileIfExists(thumbnailPath);
+    }
+
     throw error;
   }
 }
@@ -791,7 +824,6 @@ export async function appendScannedPagesToDocument(
     throw new Error('Eklenecek geçerli tarama bulunamadı.');
   }
 
-  const db = await getDb();
   const document = await getDocumentDetail(documentId);
   const lastOrder = document.pages.length
     ? Math.max(...document.pages.map((page) => page.page_order))

@@ -21,6 +21,8 @@ import {
   createAssetFromImage,
   getAssetsByType,
   getPreferredAssetPreviewUri,
+  parseAssetMetadata,
+  type AssetType,
   type StoredAsset,
 } from '../../modules/assets/asset.service';
 import {
@@ -29,6 +31,7 @@ import {
 } from '../../modules/documents/document.service';
 import { prepareStampAssetImage } from '../../modules/imaging/imaging.service';
 import {
+  addSignatureAssetOverlay,
   addStampOverlay,
   deleteOverlay,
   getOverlayAssetId,
@@ -111,10 +114,17 @@ type OverlayPreviewItem =
       isSelected: boolean;
     }
   | {
-      kind: 'signature';
+      kind: 'signature-strokes';
       overlay: DocumentOverlay;
       strokes: SignatureStroke[];
       color: string;
+      style: ViewStyle;
+      isSelected: boolean;
+    }
+  | {
+      kind: 'signature-asset';
+      overlay: DocumentOverlay;
+      asset: StoredAsset;
       style: ViewStyle;
       isSelected: boolean;
     };
@@ -433,14 +443,20 @@ function SignaturePreview({
   );
 }
 
+function getAssetLabel(type: AssetType) {
+  return type === 'stamp' ? 'Kaşe' : 'İmza';
+}
+
 export function PdfEditorScreen({ route, navigation }: Props) {
   const { documentId } = route.params;
 
   const [document, setDocument] = useState<DocumentDetail | null>(null);
-  const [assets, setAssets] = useState<StoredAsset[]>([]);
+  const [stampAssets, setStampAssets] = useState<StoredAsset[]>([]);
+  const [signatureAssets, setSignatureAssets] = useState<StoredAsset[]>([]);
+  const [activeLibraryType, setActiveLibraryType] = useState<AssetType>('stamp');
+  const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null);
   const [overlays, setOverlays] = useState<DocumentOverlay[]>([]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
-  const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null);
   const [selectedOverlayId, setSelectedOverlayId] = useState<number | null>(null);
   const [stampSizePreset, setStampSizePreset] = useState<StampSizePreset>('medium');
   const [loading, setLoading] = useState(true);
@@ -458,9 +474,19 @@ export function PdfEditorScreen({ route, navigation }: Props) {
 
   const currentPage = document?.pages[currentPageIndex] ?? null;
 
+  const allAssets = useMemo(
+    () => [...stampAssets, ...signatureAssets],
+    [signatureAssets, stampAssets],
+  );
+
+  const activeLibraryAssets = useMemo(
+    () => (activeLibraryType === 'stamp' ? stampAssets : signatureAssets),
+    [activeLibraryType, signatureAssets, stampAssets],
+  );
+
   const selectedAsset = useMemo(
-    () => assets.find((asset) => asset.id === selectedAssetId) ?? null,
-    [assets, selectedAssetId],
+    () => activeLibraryAssets.find((asset) => asset.id === selectedAssetId) ?? null,
+    [activeLibraryAssets, selectedAssetId],
   );
 
   const selectedOverlay = useMemo(
@@ -509,9 +535,10 @@ export function PdfEditorScreen({ route, navigation }: Props) {
         try {
           setLoading(true);
 
-          const [doc, stampAssets] = await Promise.all([
+          const [doc, nextStampAssets, nextSignatureAssets] = await Promise.all([
             getDocumentDetail(documentId),
             getAssetsByType('stamp'),
+            getAssetsByType('signature'),
           ]);
 
           if (!active) {
@@ -519,14 +546,8 @@ export function PdfEditorScreen({ route, navigation }: Props) {
           }
 
           setDocument(doc);
-          setAssets(stampAssets);
-          setSelectedAssetId((current) => {
-            if (current && stampAssets.some((asset) => asset.id === current)) {
-              return current;
-            }
-
-            return stampAssets[0]?.id ?? null;
-          });
+          setStampAssets(nextStampAssets);
+          setSignatureAssets(nextSignatureAssets);
           setCurrentPageIndex((prev) => {
             if (doc.pages.length === 0) {
               return 0;
@@ -550,6 +571,18 @@ export function PdfEditorScreen({ route, navigation }: Props) {
       };
     }, [documentId]),
   );
+
+  useEffect(() => {
+    const nextAssets = activeLibraryType === 'stamp' ? stampAssets : signatureAssets;
+
+    setSelectedAssetId((current) => {
+      if (current && nextAssets.some((asset) => asset.id === current)) {
+        return current;
+      }
+
+      return nextAssets[0]?.id ?? null;
+    });
+  }, [activeLibraryType, signatureAssets, stampAssets]);
 
   useEffect(() => {
     let active = true;
@@ -614,7 +647,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
 
         setSelectedAssetImageSize(nextSize);
       } catch (error) {
-        console.warn('[PdfEditor] Failed to resolve selected stamp size:', error);
+        console.warn('[PdfEditor] Failed to resolve selected asset size:', error);
 
         if (active) {
           setSelectedAssetImageSize({ width: 0, height: 0 });
@@ -677,8 +710,9 @@ export function PdfEditorScreen({ route, navigation }: Props) {
           metadata: prepared.metadata,
         });
 
-        const nextAssets = await getAssetsByType('stamp');
-        setAssets(nextAssets);
+        const nextStampAssets = await getAssetsByType('stamp');
+        setStampAssets(nextStampAssets);
+        setActiveLibraryType('stamp');
         setSelectedAssetId(created.id);
       } finally {
         await removeFilesIfExist([prepared.processedUri, prepared.previewUri]);
@@ -718,14 +752,19 @@ export function PdfEditorScreen({ route, navigation }: Props) {
     });
   }, [previewFrame.height, previewFrame.width, selectedAssetImageSize, stampSizePreset]);
 
-  const handlePlaceStamp = useCallback(
+  const handlePlaceSelectedAsset = useCallback(
     async (event: GestureResponderEvent) => {
       if (busy) {
         return;
       }
 
       if (!currentPage || !selectedAsset) {
-        Alert.alert('Kaşe seç', 'Önce bir kaşe seç veya yeni bir kaşe ekle.');
+        Alert.alert(
+          `${getAssetLabel(activeLibraryType)} seç`,
+          activeLibraryType === 'stamp'
+            ? 'Önce bir kaşe seç veya yeni bir kaşe ekle.'
+            : 'Önce bir hazır imza seç veya yeni imza oluştur.',
+        );
         return;
       }
 
@@ -758,26 +797,56 @@ export function PdfEditorScreen({ route, navigation }: Props) {
       try {
         setBusy(true);
 
-        await addStampOverlay({
-          documentId,
-          pageId: currentPage.id,
-          assetId: selectedAsset.id,
-          x: nextFrame.x,
-          y: nextFrame.y,
-          width: nextFrame.width,
-          height: nextFrame.height,
-          opacity: 0.95,
-          rotation: 0,
-        });
+        if (activeLibraryType === 'signature') {
+          const metadata = parseAssetMetadata(selectedAsset.metadata ?? null);
+          const strokeColor =
+            typeof metadata.strokeColor === 'string'
+              ? normalizeHexColor(metadata.strokeColor)
+              : DEFAULT_SIGNATURE_COLOR;
+
+          await addSignatureAssetOverlay({
+            documentId,
+            pageId: currentPage.id,
+            assetId: selectedAsset.id,
+            x: nextFrame.x,
+            y: nextFrame.y,
+            width: nextFrame.width,
+            height: nextFrame.height,
+            opacity: 1,
+            rotation: 0,
+            strokeColor,
+          });
+        } else {
+          await addStampOverlay({
+            documentId,
+            pageId: currentPage.id,
+            assetId: selectedAsset.id,
+            x: nextFrame.x,
+            y: nextFrame.y,
+            width: nextFrame.width,
+            height: nextFrame.height,
+            opacity: 0.95,
+            rotation: 0,
+          });
+        }
 
         await reloadCurrentPageOverlays();
       } catch (error) {
-        Alert.alert('Hata', getErrorMessage(error, 'Kaşe yerleştirilemedi.'));
+        Alert.alert(
+          'Hata',
+          getErrorMessage(
+            error,
+            activeLibraryType === 'stamp'
+              ? 'Kaşe yerleştirilemedi.'
+              : 'Hazır imza yerleştirilemedi.',
+          ),
+        );
       } finally {
         setBusy(false);
       }
     },
     [
+      activeLibraryType,
       busy,
       currentPage,
       documentId,
@@ -1023,6 +1092,14 @@ export function PdfEditorScreen({ route, navigation }: Props) {
         return;
       }
 
+      if (!selectedSignatureInfo || selectedSignatureInfo.strokes.length === 0) {
+        Alert.alert(
+          'Hazır imza',
+          'Kütüphaneden eklenen hazır imzalarda renk değiştirme desteklenmiyor.',
+        );
+        return;
+      }
+
       try {
         setBusy(true);
 
@@ -1039,7 +1116,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
         setBusy(false);
       }
     },
-    [reloadCurrentPageOverlays, selectedOverlay],
+    [reloadCurrentPageOverlays, selectedOverlay, selectedSignatureInfo],
   );
 
   const overlayPreviewItems = useMemo<OverlayPreviewItem[]>(() => {
@@ -1070,22 +1147,37 @@ export function PdfEditorScreen({ route, navigation }: Props) {
         if (overlay.type === 'signature') {
           const signature = getOverlaySignaturePresentation(overlay);
 
-          if (!signature.strokes.length) {
+          if (signature.strokes.length > 0) {
+            return {
+              kind: 'signature-strokes',
+              overlay,
+              strokes: signature.strokes,
+              color: signature.color,
+              style,
+              isSelected: overlay.id === selectedOverlayId,
+            };
+          }
+
+          const assetId = getOverlayAssetId(overlay);
+          const asset = allAssets.find(
+            (item) => item.id === assetId && item.type === 'signature',
+          );
+
+          if (!asset) {
             return null;
           }
 
           return {
-            kind: 'signature',
+            kind: 'signature-asset',
             overlay,
-            strokes: signature.strokes,
-            color: signature.color,
+            asset,
             style,
             isSelected: overlay.id === selectedOverlayId,
           };
         }
 
         const assetId = getOverlayAssetId(overlay);
-        const asset = assets.find((item) => item.id === assetId);
+        const asset = allAssets.find((item) => item.id === assetId);
 
         if (!asset) {
           return null;
@@ -1100,7 +1192,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
         };
       })
       .filter(Boolean) as OverlayPreviewItem[];
-  }, [assets, overlayDraft, overlays, previewFrame, selectedOverlayId]);
+  }, [allAssets, overlayDraft, overlays, previewFrame, selectedOverlayId]);
 
   if (loading) {
     return (
@@ -1134,7 +1226,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
   return (
     <Screen
       title="PDF Editör"
-      subtitle="İmzayı veya kaşeyi tutup sürükle, sağ alt tutamaçtan boyutlandır."
+      subtitle="Öğeyi tutup sürükle, sağ alt tutamaçtan boyutlandır."
     >
       <View style={styles.summaryCard}>
         <View style={styles.summaryTextBlock}>
@@ -1145,7 +1237,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
           </Text>
         </View>
 
-        <Text style={styles.summaryValue}>{assets.length}</Text>
+        <Text style={styles.summaryValue}>{activeLibraryAssets.length}</Text>
       </View>
 
       <View style={styles.toolbarRow}>
@@ -1201,7 +1293,30 @@ export function PdfEditorScreen({ route, navigation }: Props) {
       </View>
 
       <View style={styles.sizeCard}>
-        <Text style={styles.sizeCardTitle}>Yeni kaşe boyutu</Text>
+        <Text style={styles.sizeCardTitle}>Kütüphane seçimi</Text>
+
+        <View style={styles.sizeRow}>
+          <ToolbarButton
+            title="Kaşeler"
+            onPress={() => setActiveLibraryType('stamp')}
+            active={activeLibraryType === 'stamp'}
+            disabled={busy}
+          />
+          <ToolbarButton
+            title="İmzalarım"
+            onPress={() => setActiveLibraryType('signature')}
+            active={activeLibraryType === 'signature'}
+            disabled={busy}
+          />
+        </View>
+
+        <Text style={styles.sizeHint}>
+          Boş alana dokununca seçili {activeLibraryType === 'stamp' ? 'kaşe' : 'hazır imza'} yerleşir.
+        </Text>
+      </View>
+
+      <View style={styles.sizeCard}>
+        <Text style={styles.sizeCardTitle}>Yeni öğe boyutu</Text>
 
         <View style={styles.sizeRow}>
           <ToolbarButton
@@ -1225,7 +1340,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
         </View>
 
         <Text style={styles.sizeHint}>
-          Bu boyut sadece yeni eklenecek kaşelerde kullanılır.
+          Bu boyut yeni eklenecek kaşe ve hazır imzalarda kullanılır.
         </Text>
       </View>
 
@@ -1236,7 +1351,9 @@ export function PdfEditorScreen({ route, navigation }: Props) {
             {formatOverlayPosition(selectedOverlay)} • Tutup sürükle, sağ alt köşeden boyutlandır
           </Text>
 
-          {selectedOverlay.type === 'signature' && selectedSignatureInfo ? (
+          {selectedOverlay.type === 'signature' &&
+          selectedSignatureInfo &&
+          selectedSignatureInfo.strokes.length > 0 ? (
             <>
               <View style={styles.signatureMetaRow}>
                 <Text style={styles.signatureMetaLabel}>İmza rengi</Text>
@@ -1297,7 +1414,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
 
         <Pressable
           style={styles.previewHitArea}
-          onPress={handlePlaceStamp}
+          onPress={handlePlaceSelectedAsset}
           disabled={busy}
         />
 
@@ -1321,17 +1438,17 @@ export function PdfEditorScreen({ route, navigation }: Props) {
                 item.isSelected && styles.overlayContentBoxSelected,
               ]}
             >
-              {item.kind === 'stamp' ? (
-                <Image
-                  source={{ uri: getPreferredAssetPreviewUri(item.asset) }}
-                  resizeMode="contain"
-                  style={styles.overlayImage}
-                />
-              ) : (
+              {item.kind === 'signature-strokes' ? (
                 <SignaturePreview
                   strokes={item.strokes}
                   color={item.color}
                   selected={item.isSelected}
+                />
+              ) : (
+                <Image
+                  source={{ uri: getPreferredAssetPreviewUri(item.asset) }}
+                  resizeMode="contain"
+                  style={styles.overlayImage}
                 />
               )}
             </View>
@@ -1357,7 +1474,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
 
         <View pointerEvents="none" style={styles.previewHintContainer}>
           <Text style={styles.previewHintText}>
-            Boş alana dokun: yeni kaşe • Öğeyi tut ve sürükle: taşı • Sağ alt tutamaç: büyüt/küçült
+            Boş alana dokun: seçili {activeLibraryType === 'stamp' ? 'kaşe' : 'hazır imza'} • Öğeyi tut ve sürükle: taşı • Sağ alt tutamaç: büyüt/küçült
           </Text>
         </View>
 
@@ -1369,14 +1486,19 @@ export function PdfEditorScreen({ route, navigation }: Props) {
       </View>
 
       <Text style={styles.selectedAssetText}>
-        Seçili kaşe: {selectedAsset ? selectedAsset.name : 'Yok'}
+        Seçili {activeLibraryType === 'stamp' ? 'kaşe' : 'imza'}:{' '}
+        {selectedAsset ? selectedAsset.name : 'Yok'}
       </Text>
 
-      {assets.length === 0 ? (
+      {activeLibraryAssets.length === 0 ? (
         <View style={styles.emptyAssetCard}>
-          <Text style={styles.emptyAssetTitle}>Henüz kaşe yok</Text>
+          <Text style={styles.emptyAssetTitle}>
+            Henüz {activeLibraryType === 'stamp' ? 'kaşe' : 'imza'} yok
+          </Text>
           <Text style={styles.emptyAssetText}>
-            Kaşe ekleyip tekrar kullanabilir, sonra aynı kaşeyi farklı belgelere yerleştirebilirsin.
+            {activeLibraryType === 'stamp'
+              ? 'Kaşe ekleyip tekrar kullanabilir, sonra aynı kaşeyi farklı belgelere yerleştirebilirsin.'
+              : 'İmza ekranından kaydettiğin imzalar burada görünür. Hazır imzayı seçip boş alana dokunarak tekrar yerleştirebilirsin.'}
           </Text>
         </View>
       ) : (
@@ -1386,7 +1508,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
           contentContainerStyle={styles.assetList}
           style={styles.assetScroller}
         >
-          {assets.map((asset) => (
+          {activeLibraryAssets.map((asset) => (
             <Pressable
               key={asset.id}
               onPress={() => setSelectedAssetId(asset.id)}
@@ -1419,7 +1541,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
         ) : (
           overlays.map((overlay, index) => {
             const assetId = getOverlayAssetId(overlay);
-            const asset = assets.find((item) => item.id === assetId);
+            const asset = allAssets.find((item) => item.id === assetId);
             const isSelected = selectedOverlayId === overlay.id;
             const isSignature = overlay.type === 'signature';
             const signature = isSignature
@@ -1443,7 +1565,9 @@ export function PdfEditorScreen({ route, navigation }: Props) {
                   </Text>
                   <Text style={styles.overlayRowHint}>
                     {isSignature
-                      ? `İmza overlay • ${formatOverlayPosition(overlay)}`
+                      ? signature && signature.strokes.length > 0
+                        ? `Serbest imza • ${formatOverlayPosition(overlay)}`
+                        : `${asset?.name ?? 'Hazır imza'} • ${formatOverlayPosition(overlay)}`
                       : `${asset?.name ?? 'Bilinmeyen kaşe'} • ${formatOverlayPosition(overlay)}`}
                   </Text>
 
