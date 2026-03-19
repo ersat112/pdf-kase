@@ -4,6 +4,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Pressable,
   StyleSheet,
@@ -15,6 +16,7 @@ import {
 import { Screen } from '../../components/common/Screen';
 import {
   getRecentDocuments,
+  mergeDocuments,
   renameDocumentTitle,
   setDocumentFavorite,
   setDocumentsFavorite,
@@ -551,7 +553,10 @@ export function DocumentsScreen() {
         await setDocumentFavorite(item.id, !isFavorite(item));
         await loadDocuments();
       } catch (error) {
-        console.warn('[Documents] Toggle favorite failed:', error);
+        Alert.alert(
+          'Hata',
+          error instanceof Error ? error.message : 'Favori durumu güncellenemedi.',
+        );
       } finally {
         setBusy(false);
       }
@@ -571,7 +576,10 @@ export function DocumentsScreen() {
         await loadDocuments();
         clearSelection();
       } catch (error) {
-        console.warn('[Documents] Bulk favorite failed:', error);
+        Alert.alert(
+          'Hata',
+          error instanceof Error ? error.message : 'Toplu favori işlemi başarısız.',
+        );
       } finally {
         setBusy(false);
       }
@@ -604,12 +612,45 @@ export function DocumentsScreen() {
       await loadDocuments();
       setRenameTargetId(null);
       setRenameValue('');
+      clearSelection();
     } catch (error) {
-      console.warn('[Documents] Rename failed:', error);
+      Alert.alert(
+        'Hata',
+        error instanceof Error ? error.message : 'Belge adı güncellenemedi.',
+      );
     } finally {
       setBusy(false);
     }
-  }, [loadDocuments, renameTargetId, renameValue]);
+  }, [clearSelection, loadDocuments, renameTargetId, renameValue]);
+
+  const handleMergeDocuments = useCallback(async () => {
+    if (selectedIds.length < 2) {
+      return;
+    }
+
+    try {
+      setBusy(true);
+      const result = await mergeDocuments(selectedIds);
+      await loadDocuments();
+      clearSelection();
+
+      Alert.alert(
+        'Belgeler birleştirildi',
+        `${result.sourceDocumentCount} belge, ${result.mergedPageCount} sayfa olarak yeni kayda dönüştürüldü.`,
+      );
+
+      navigation.navigate('DocumentDetail', {
+        documentId: result.documentId,
+      });
+    } catch (error) {
+      Alert.alert(
+        'Hata',
+        error instanceof Error ? error.message : 'Belgeler birleştirilemedi.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }, [clearSelection, loadDocuments, navigation, selectedIds]);
 
   return (
     <Screen
@@ -727,6 +768,21 @@ export function DocumentsScreen() {
               <Ionicons name="star-outline" size={16} color={colors.textSecondary} />
               <Text style={styles.selectionActionButtonText}>Favoriden çıkar</Text>
             </Pressable>
+
+            {selectedIds.length >= 2 ? (
+              <Pressable
+                onPress={() => void handleMergeDocuments()}
+                disabled={busy}
+                style={({ pressed }) => [
+                  styles.selectionActionButton,
+                  pressed && !busy && styles.pressed,
+                  busy && styles.selectionActionButtonDisabled,
+                ]}
+              >
+                <Ionicons name="git-merge-outline" size={16} color={colors.textSecondary} />
+                <Text style={styles.selectionActionButtonText}>Birleştir</Text>
+              </Pressable>
+            ) : null}
 
             {singleSelectedDocument ? (
               <Pressable

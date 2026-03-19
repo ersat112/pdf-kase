@@ -19,11 +19,6 @@ import {
 import { Screen } from '../../components/common/Screen';
 import { useAdGate } from '../../hooks/useAdGate';
 import {
-  getPremiumGateMessage,
-  resolveBillingCapabilities,
-  type PremiumCapabilityKey,
-} from '../../modules/billing/billing-capabilities';
-import {
   appendScannedPagesToDocument,
   autoCropDocumentPage,
   exportDocumentToExcel,
@@ -31,6 +26,7 @@ import {
   exportDocumentToWord,
   extractDocumentText,
   getDocumentDetail,
+  moveDocumentPage,
   replaceDocumentPageFromScan,
   rotateDocumentPageLeft,
   translateDocumentTextToTurkish,
@@ -203,20 +199,7 @@ function SecondaryButton({
 export function DocumentDetailScreen({ route, navigation }: Props) {
   const { documentId } = route.params;
   const { preloadInterstitial, runAfterTask } = useAdGate();
-
-  const billingIsPro = useBillingStore((state) => state.isPro);
-  const billingPlan = useBillingStore((state) => state.plan);
-  const billingExpiresAt = useBillingStore((state) => state.expiresAt);
-
-  const capabilities = useMemo(
-    () =>
-      resolveBillingCapabilities({
-        isPro: billingIsPro,
-        plan: billingPlan,
-        expiresAt: billingExpiresAt,
-      }),
-    [billingExpiresAt, billingIsPro, billingPlan],
-  );
+  const isPro = useBillingStore((state) => state.isPro);
 
   const [document, setDocument] = useState<DocumentDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -269,11 +252,11 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
     }
   }, []);
 
-  const promptPremiumForCapability = useCallback(
-    (capability: PremiumCapabilityKey) => {
+  const promptPremiumForSave = useCallback(
+    (featureLabel: string) => {
       Alert.alert(
         'Premium gerekli',
-        getPremiumGateMessage(capability),
+        `${featureLabel} özelliği kaydetme / dışa aktarma aşamasında premium gerektirir. Free sürümde tüm araçları deneyebilir, premium ile dosyanı kaydedebilirsin.`,
         [
           { text: 'Şimdi değil', style: 'cancel' },
           {
@@ -402,8 +385,8 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
       return;
     }
 
-    if (!capabilities.canExportPdf) {
-      promptPremiumForCapability('export_pdf');
+    if (!isPro) {
+      promptPremiumForSave('PDF kaydetme');
       return;
     }
 
@@ -422,16 +405,7 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
     } finally {
       resetBusyState();
     }
-  }, [
-    capabilities.canExportPdf,
-    document?.pages.length,
-    documentId,
-    loadDocument,
-    promptPremiumForCapability,
-    resetBusyState,
-    runAfterTask,
-    setBusyState,
-  ]);
+  }, [document?.pages.length, documentId, isPro, loadDocument, promptPremiumForSave, resetBusyState, runAfterTask, setBusyState]);
 
   const handleSharePdf = useCallback(async () => {
     if (!document?.pdf_path) {
@@ -439,8 +413,8 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
       return;
     }
 
-    if (!capabilities.canShare) {
-      promptPremiumForCapability('share');
+    if (!isPro) {
+      promptPremiumForSave('PDF paylaşma');
       return;
     }
 
@@ -463,13 +437,7 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
     } finally {
       resetBusyState();
     }
-  }, [
-    capabilities.canShare,
-    document,
-    promptPremiumForCapability,
-    resetBusyState,
-    setBusyState,
-  ]);
+  }, [document, isPro, promptPremiumForSave, resetBusyState, setBusyState]);
 
   const handleExportWord = useCallback(async () => {
     if (busyRef.current) {
@@ -481,8 +449,8 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
       return;
     }
 
-    if (!capabilities.canExportWord) {
-      promptPremiumForCapability('export_word');
+    if (!isPro) {
+      promptPremiumForSave("Word'e çevirme");
       return;
     }
 
@@ -511,17 +479,7 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
     } finally {
       resetBusyState();
     }
-  }, [
-    capabilities.canExportWord,
-    document?.pages.length,
-    document?.title,
-    documentId,
-    loadDocument,
-    promptPremiumForCapability,
-    resetBusyState,
-    runAfterTask,
-    setBusyState,
-  ]);
+  }, [document?.pages.length, document?.title, documentId, isPro, loadDocument, promptPremiumForSave, resetBusyState, runAfterTask, setBusyState]);
 
   const handleExportExcel = useCallback(async () => {
     if (busyRef.current) {
@@ -533,8 +491,8 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
       return;
     }
 
-    if (!capabilities.canExportExcel) {
-      promptPremiumForCapability('export_excel');
+    if (!isPro) {
+      promptPremiumForSave("Excel'e çevirme");
       return;
     }
 
@@ -563,17 +521,7 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
     } finally {
       resetBusyState();
     }
-  }, [
-    capabilities.canExportExcel,
-    document?.pages.length,
-    document?.title,
-    documentId,
-    loadDocument,
-    promptPremiumForCapability,
-    resetBusyState,
-    runAfterTask,
-    setBusyState,
-  ]);
+  }, [document?.pages.length, document?.title, documentId, isPro, loadDocument, promptPremiumForSave, resetBusyState, runAfterTask, setBusyState]);
 
   const handleRetakePage = useCallback(async () => {
     if (busyRef.current || !currentPage) {
@@ -631,6 +579,30 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
       resetBusyState();
     }
   }, [currentPage, loadDocument, resetBusyState, setBusyState]);
+
+  const handleMovePage = useCallback(
+    async (direction: 'up' | 'down') => {
+      if (busyRef.current || !currentPage || !document) {
+        return;
+      }
+
+      try {
+        setBusyState(
+          true,
+          direction === 'up' ? 'Sayfa yukarı taşınıyor...' : 'Sayfa aşağı taşınıyor...',
+        );
+
+        const result = await moveDocumentPage(document.id, currentPage.id, direction);
+        await loadDocument();
+        setCurrentPageIndex(result.newIndex);
+      } catch (actionError) {
+        Alert.alert('Hata', getErrorMessage(actionError, 'Sayfa sırası güncellenemedi.'));
+      } finally {
+        resetBusyState();
+      }
+    },
+    [currentPage, document, loadDocument, resetBusyState, setBusyState],
+  );
 
   const handleAddPage = useCallback(async () => {
     if (busyRef.current || !document) {
@@ -767,17 +739,15 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
 
         <View style={styles.summaryItem}>
           <Text style={styles.summaryLabel}>Plan</Text>
-          <Text style={styles.summaryValue}>
-            {capabilities.canSave ? 'Premium' : 'Free'}
-          </Text>
+          <Text style={styles.summaryValue}>{isPro ? 'Premium' : 'Free'}</Text>
         </View>
       </View>
 
-      {!capabilities.canSave ? (
+      {!isPro ? (
         <View style={styles.noticeCard}>
           <Text style={styles.noticeTitle}>Free sürüm</Text>
           <Text style={styles.noticeText}>
-            Tüm araçlar açık. Kaydetme, paylaşma ve dışa aktarma adımları premium ile tamamlanır.
+            Tüm araçları kullanabilirsin. Kaydetme / export / paylaşma aşamasında premium gerekir.
           </Text>
         </View>
       ) : null}
@@ -843,6 +813,8 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
           contentContainerStyle={styles.bottomToolbarRow}
         >
           <ActionPill title="Tekrar al" onPress={() => void handleRetakePage()} disabled={busy || !currentPage} />
+          <ActionPill title="Yukarı taşı" onPress={() => void handleMovePage('up')} disabled={busy || !currentPage || currentPageIndex === 0} />
+          <ActionPill title="Aşağı taşı" onPress={() => void handleMovePage('down')} disabled={busy || !currentPage || currentPageIndex >= document.pages.length - 1} />
           <ActionPill title="Sola döndür" onPress={() => void handleRotateLeft()} disabled={busy || !currentPage} />
           <ActionPill title="Kırp" onPress={() => void handleAutoCrop()} disabled={busy || !currentPage} />
           <ActionPill title="Akıllı Sil" onPress={handleOpenSmartErase} disabled={busy || !currentPage} />
@@ -864,32 +836,26 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
 
         <View style={styles.outputActions}>
           <PrimaryButton
-            title={
-              capabilities.canExportPdf
-                ? document.pdf_path
-                  ? 'PDF güncelle'
-                  : 'PDF oluştur'
-                : 'PDF kaydet (Premium)'
-            }
+            title={isPro ? (document.pdf_path ? 'PDF güncelle' : 'PDF oluştur') : 'PDF kaydet (Premium)'}
             onPress={() => void handleExportPdf()}
             disabled={busy}
           />
           <SecondaryButton
-            title={capabilities.canShare ? 'PDF paylaş' : 'PDF paylaş (Premium)'}
+            title={isPro ? 'PDF paylaş' : 'PDF paylaş (Premium)'}
             onPress={() => void handleSharePdf()}
-            disabled={busy || (!document.pdf_path && capabilities.canShare)}
+            disabled={busy || (!document.pdf_path && isPro)}
           />
           <SecondaryButton
-            title={capabilities.canExportWord ? "Word'e çevir" : "Word'e çevir (Premium)"}
+            title={isPro ? "Word'e çevir" : "Word'e çevir (Premium)"}
             onPress={() => void handleExportWord()}
             disabled={busy}
           />
           <SecondaryButton
-            title={capabilities.canExportExcel ? "Excel'e çevir" : "Excel'e çevir (Premium)"}
+            title={isPro ? "Excel'e çevir" : "Excel'e çevir (Premium)"}
             onPress={() => void handleExportExcel()}
             disabled={busy}
           />
-          {!capabilities.canSave ? (
+          {!isPro ? (
             <SecondaryButton
               title="Premium farklarını gör"
               onPress={() => navigation.navigate('Pricing')}

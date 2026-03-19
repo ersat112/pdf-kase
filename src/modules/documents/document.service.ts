@@ -3,6 +3,7 @@ import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { Image } from 'react-native';
 
 import { getDb } from '../../db/sqlite';
+import { useBillingStore } from '../../store/useBillingStore';
 import { getAssetById } from '../assets/asset.service';
 import {
   buildExcelDocumentBytes,
@@ -152,6 +153,22 @@ export type TranslateDocumentTextResult = {
   translatedAt: string;
 };
 
+export type MoveDocumentPageDirection = 'up' | 'down';
+
+export type MoveDocumentPageResult = {
+  documentId: number;
+  pageId: number;
+  newIndex: number;
+  moved: boolean;
+};
+
+export type MergeDocumentsResult = {
+  documentId: number;
+  title: string;
+  mergedPageCount: number;
+  sourceDocumentCount: number;
+};
+
 type OverlayContent = {
   assetId?: number;
   strokes?: SignatureStroke[];
@@ -183,6 +200,15 @@ function buildDocumentTitle() {
   return `Belge ${datePart} ${timePart}`;
 }
 
+function buildMergedDocumentTitle() {
+  const now = new Date();
+
+  const datePart = `${pad(now.getDate())}.${pad(now.getMonth() + 1)}.${now.getFullYear()}`;
+  const timePart = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+
+  return `Birleşik Belge ${datePart} ${timePart}`;
+}
+
 function buildDocumentTitleFromFileName(fileName?: string | null) {
   const trimmed = fileName?.trim();
 
@@ -202,11 +228,7 @@ function normalizeDocumentTitleInput(value: string) {
     throw new Error('Belge adı boş bırakılamaz.');
   }
 
-  if (normalized.length > 120) {
-    return normalized.slice(0, 120).trim();
-  }
-
-  return normalized;
+  return normalized.slice(0, 120);
 }
 
 function normalizeImportUri(uri: string) {
@@ -861,6 +883,67 @@ async function ensureDocumentOcrText(documentId: number) {
   };
 }
 
+async function applyDocumentPageOrder(
+  documentId: number,
+  orderedPageIds: number[],
+): Promise<void> {
+  if (!isPositiveInteger(documentId)) {
+    throw new Error('Geçersiz belge kimliği.');
+  }
+
+  const db = await getDb();
+  const rows = await db.getAllAsync<{
+    id: number;
+    image_path: string;
+    page_order: number;
+  }>(
+    `
+      SELECT id, image_path, page_order
+      FROM document_pages
+      WHERE document_id = ?
+      ORDER BY page_order ASC, id ASC
+    `,
+    documentId,
+  );
+
+  if (!rows.length) {
+    throw new Error('Sıralanacak sayfa bulunamadı.');
+  }
+
+  if (rows.length !== orderedPageIds.length) {
+    throw new Error('Sayfa sıralama verisi tutarsız.');
+  }
+
+  const currentIds = rows.map((row) => row.id).sort((left, right) => left - right);
+  const nextIds = [...orderedPageIds].sort((left, right) => left - right);
+
+  if (currentIds.some((value, index) => value !== nextIds[index])) {
+    throw new Error('Geçersiz sayfa sıralaması.');
+  }
+
+  const unchanged = rows.every((row, index) => row.id === orderedPageIds[index]);
+
+  if (unchanged) {
+    return;
+  }
+
+  for (let index = 0; index < orderedPageIds.length; index += 1) {
+    await db.runAsync(
+      `
+        UPDATE document_pages
+        SET page_order = ?
+        WHERE id = ?
+      `,
+      index,
+      orderedPageIds[index],
+    );
+  }
+
+  const imagePathById = new Map(rows.map((row) => [row.id, row.image_path]));
+  await updateDocumentThumbnail(documentId, imagePathById.get(orderedPageIds[0]) ?? null);
+  await invalidateDocumentOutput(documentId);
+}
+
 export async function createDraftFromImportedImage(sourceUri: string) {
   return createDraftFromSourceImages([sourceUri]);
 }
@@ -1200,7 +1283,7 @@ export async function renameDocumentTitle(
     throw new Error('Geçersiz belge kimliği.');
   }
 
-  const normalizedTitle = normalizeDocumentTitleInput(nextTitle);
+  const title = normalizeDocumentTitleInput(nextTitle);
   const db = await getDb();
   const updatedAt = new Date().toISOString();
 
@@ -1210,14 +1293,14 @@ export async function renameDocumentTitle(
       SET title = ?, updated_at = ?
       WHERE id = ?
     `,
-    normalizedTitle,
+    title,
     updatedAt,
     documentId,
   );
 
   return {
     documentId,
-    title: normalizedTitle,
+    title,
     updatedAt,
   };
 }
@@ -1283,6 +1366,122 @@ export async function setDocumentsFavorite(
     isFavorite,
     updatedAt,
   };
+}
+
+export async function moveDocumentPage(
+  documentId: number,
+  pageId: number,
+  direction: MoveDocumentPageDirection,
+): Promise<MoveDocumentPageResult> {
+  if (!isPositiveInteger(documentId)) {
+    throw new Error('Geçersiz belge kimliği.');
+  }
+
+  if (!isPositiveInteger(pageId)) {
+    throw new Error('Geçersiz sayfa kimliği.');
+  }
+
+  const document = await getDocumentDetail(documentId);
+
+  if (!document.pages.length) {
+    throw new Error('Taşınacak sayfa bulunamadı.');
+  }
+
+  const currentIndex = document.pages.findIndex((page) => page.id === pageId);
+
+  if (currentIndex === -1) {
+    throw new Error('Sayfa bu belgeye ait değil.');
+  }
+
+  const targetIndex =
+    direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+
+  if (targetIndex < 0 || targetIndex >= document.pages.length) {
+    return {
+      documentId,
+      pageId,
+      newIndex: currentIndex,
+      moved: false,
+    };
+  }
+
+  const orderedPageIds = document.pages.map((page) => page.id);
+  const [movedPageId] = orderedPageIds.splice(currentIndex, 1);
+  orderedPageIds.splice(targetIndex, 0, movedPageId);
+
+  await applyDocumentPageOrder(documentId, orderedPageIds);
+
+  return {
+    documentId,
+    pageId,
+    newIndex: targetIndex,
+    moved: true,
+  };
+}
+
+export async function mergeDocuments(
+  documentIds: number[],
+): Promise<MergeDocumentsResult> {
+  const normalizedIds = Array.from(
+    new Set(documentIds.filter((value) => isPositiveInteger(value))),
+  );
+
+  if (normalizedIds.length < 2) {
+    throw new Error('Birleştirme için en az iki belge seçilmelidir.');
+  }
+
+  const sourceDocuments = await Promise.all(
+    normalizedIds.map((documentId) => getDocumentDetail(documentId)),
+  );
+
+  const unsupported = sourceDocuments.find((document) => document.pages.length === 0);
+
+  if (unsupported) {
+    throw new Error(
+      'Şu an sadece sayfa tabanlı belgeler birleştirilebilir. Dışarıdan PDF olarak içe aktarılan kayıtlar merge v1 kapsamı dışında.',
+    );
+  }
+
+  const sourceUris = sourceDocuments.flatMap((document) =>
+    document.pages
+      .slice()
+      .sort((left, right) => left.page_order - right.page_order)
+      .map((page) => page.image_path),
+  );
+
+  if (!sourceUris.length) {
+    throw new Error('Birleştirilecek sayfa bulunamadı.');
+  }
+
+  const title = buildMergedDocumentTitle();
+  const { documentId, createdAt } = await createDocumentRow(title);
+
+  try {
+    const persistedUris = await insertPageRows(
+      documentId,
+      sourceUris,
+      createdAt,
+      0,
+    );
+
+    await updateDocumentThumbnail(documentId, persistedUris[0] ?? null);
+
+    return {
+      documentId,
+      title,
+      mergedPageCount: persistedUris.length,
+      sourceDocumentCount: sourceDocuments.length,
+    };
+  } catch (error) {
+    try {
+      await cleanupDocumentFiles(documentId);
+    } catch (cleanupError) {
+      console.warn('[DocumentService] Merge cleanup failed:', cleanupError);
+    }
+
+    await deleteDocumentRow(documentId);
+    throw error;
+  }
 }
 
 export async function extractDocumentText(
@@ -1634,6 +1833,9 @@ export async function exportDocumentToPdf(documentId: number) {
     }
 
     const previousPdfPath = document.pdf_path;
+    const isPro = useBillingStore.getState().isPro;
+    const shouldAddFreeWatermark =
+      !isPro && resolvedOverlays.some((overlay) => overlay.type === 'stamp');
 
     const pdf = await buildPdfFromImages({
       title: document.title,
@@ -1642,7 +1844,7 @@ export async function exportDocumentToPdf(documentId: number) {
       author: 'PDF Kaşe',
       subject: 'Taranmış belge',
       creator: 'PDF Kaşe',
-      addFreeWatermark: false,
+      addFreeWatermark: shouldAddFreeWatermark,
     });
 
     await db.runAsync(
@@ -1690,6 +1892,8 @@ export const documentService = {
   renameDocumentTitle,
   setDocumentFavorite,
   setDocumentsFavorite,
+  moveDocumentPage,
+  mergeDocuments,
   extractDocumentText,
   exportDocumentToWord,
   exportDocumentToExcel,
