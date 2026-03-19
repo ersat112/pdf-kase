@@ -21,11 +21,14 @@ import { useAdGate } from '../../hooks/useAdGate';
 import {
   appendScannedPagesToDocument,
   autoCropDocumentPage,
+  exportDocumentToExcel,
   exportDocumentToPdf,
+  exportDocumentToWord,
   extractDocumentText,
   getDocumentDetail,
   replaceDocumentPageFromScan,
   rotateDocumentPageLeft,
+  translateDocumentTextToTurkish,
   type DocumentDetail,
 } from '../../modules/documents/document.service';
 import { launchNativeScanner } from '../../modules/scanner/scanner.service';
@@ -44,6 +47,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'DocumentDetail'>;
 const DEFAULT_BUSY_MESSAGE = 'İşlem uygulanıyor...';
 const WORD_MIME_TYPE =
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const EXCEL_MIME_TYPE = 'application/vnd.ms-excel';
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message.trim().length > 0
@@ -86,11 +90,37 @@ function buildPreviewText(value?: string | null) {
     return '';
   }
 
-  if (trimmed.length <= 280) {
+  if (trimmed.length <= 320) {
     return trimmed;
   }
 
-  return `${trimmed.slice(0, 280).trimEnd()}…`;
+  return `${trimmed.slice(0, 320).trimEnd()}…`;
+}
+
+function getSourceLanguageLabel(value?: string | null) {
+  switch ((value ?? '').toLowerCase()) {
+    case 'en':
+      return 'İngilizce';
+    case 'de':
+      return 'Almanca';
+    case 'fr':
+      return 'Fransızca';
+    case 'es':
+      return 'İspanyolca';
+    case 'it':
+      return 'İtalyanca';
+    case 'ar':
+      return 'Arapça';
+    case 'ru':
+      return 'Rusça';
+    case 'tr':
+      return 'Türkçe';
+    case 'auto':
+      return 'Otomatik';
+    case 'und':
+    default:
+      return value?.trim() ? value.toUpperCase() : 'Bilinmiyor';
+  }
 }
 
 function ActionPill({
@@ -177,6 +207,9 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [pagerWidth, setPagerWidth] = useState(0);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
+  const [translatedText, setTranslatedText] = useState<string | null>(null);
+  const [translatedAt, setTranslatedAt] = useState<string | null>(null);
+  const [translatedSourceLanguage, setTranslatedSourceLanguage] = useState<string | null>(null);
 
   const mountedRef = useRef(true);
   const busyRef = useRef(false);
@@ -187,8 +220,18 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
     };
   }, []);
 
+  useEffect(() => {
+    setTranslatedText(null);
+    setTranslatedAt(null);
+    setTranslatedSourceLanguage(null);
+  }, [documentId]);
+
   const currentPage = document?.pages[currentPageIndex] ?? null;
   const ocrPreview = useMemo(() => buildPreviewText(document?.ocr_text), [document?.ocr_text]);
+  const translatedPreview = useMemo(
+    () => buildPreviewText(translatedText),
+    [translatedText],
+  );
 
   const setBusyState = useCallback((value: boolean, message = DEFAULT_BUSY_MESSAGE) => {
     busyRef.current = value;
@@ -280,6 +323,40 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
     }
   }, [document?.pages.length, documentId, loadDocument, resetBusyState, runAfterTask, setBusyState]);
 
+  const handleTranslateToTurkish = useCallback(async () => {
+    if (busyRef.current) {
+      return;
+    }
+
+    if (!document?.pages.length) {
+      Alert.alert('Çeviri kullanılamıyor', 'Bu belgede çeviri için sayfa bulunamadı.');
+      return;
+    }
+
+    try {
+      setBusyState(true, 'Metin Türkçeye çevriliyor...');
+
+      const result = await runAfterTask(async () => {
+        const translation = await translateDocumentTextToTurkish(documentId);
+        await loadDocument();
+        return translation;
+      });
+
+      setTranslatedText(result.translatedText);
+      setTranslatedAt(result.translatedAt);
+      setTranslatedSourceLanguage(result.sourceLanguage);
+
+      Alert.alert(
+        'Çeviri hazır',
+        `Kaynak dil: ${getSourceLanguageLabel(result.sourceLanguage)}`,
+      );
+    } catch (actionError) {
+      Alert.alert('Hata', getErrorMessage(actionError, 'Metin çevrilemedi.'));
+    } finally {
+      resetBusyState();
+    }
+  }, [document?.pages.length, documentId, loadDocument, resetBusyState, runAfterTask, setBusyState]);
+
   const handleExportPdf = useCallback(async () => {
     if (busyRef.current) {
       return;
@@ -334,32 +411,79 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
     }
   }, [document, resetBusyState, setBusyState]);
 
-  const handleShareWord = useCallback(async () => {
-    if (!document?.word_path) {
-      Alert.alert('Word yok', 'Önce Word çıktısı oluştur.');
+  const handleExportWord = useCallback(async () => {
+    if (busyRef.current) {
+      return;
+    }
+
+    if (!document?.pages.length) {
+      Alert.alert('Word oluşturulamıyor', 'Bu belgede dönüştürülecek sayfa yok.');
       return;
     }
 
     try {
-      setBusyState(true, 'Word paylaşımı hazırlanıyor...');
+      setBusyState(true, 'Word hazırlanıyor...');
+
+      const result = await runAfterTask(async () => {
+        const exportResult = await exportDocumentToWord(documentId);
+        await loadDocument();
+        return exportResult;
+      });
 
       const isAvailable = await Sharing.isAvailableAsync();
 
       if (!isAvailable) {
-        Alert.alert('Paylaşım yok', 'Bu cihazda paylaşım desteklenmiyor.');
+        Alert.alert('Word hazır', result.fileName);
         return;
       }
 
-      await Sharing.shareAsync(document.word_path, {
+      await Sharing.shareAsync(result.fileUri, {
         mimeType: WORD_MIME_TYPE,
         dialogTitle: `${document.title}.docx`,
       });
-    } catch (shareError) {
-      Alert.alert('Hata', getErrorMessage(shareError, 'Word paylaşılamadı.'));
+    } catch (actionError) {
+      Alert.alert('Hata', getErrorMessage(actionError, 'Word oluşturulamadı.'));
     } finally {
       resetBusyState();
     }
-  }, [document?.title, document?.word_path, resetBusyState, setBusyState]);
+  }, [document?.pages.length, document?.title, documentId, loadDocument, resetBusyState, runAfterTask, setBusyState]);
+
+  const handleExportExcel = useCallback(async () => {
+    if (busyRef.current) {
+      return;
+    }
+
+    if (!document?.pages.length) {
+      Alert.alert('Excel oluşturulamıyor', 'Bu belgede dönüştürülecek sayfa yok.');
+      return;
+    }
+
+    try {
+      setBusyState(true, 'Excel hazırlanıyor...');
+
+      const result = await runAfterTask(async () => {
+        const exportResult = await exportDocumentToExcel(documentId);
+        await loadDocument();
+        return exportResult;
+      });
+
+      const isAvailable = await Sharing.isAvailableAsync();
+
+      if (!isAvailable) {
+        Alert.alert('Excel hazır', result.fileName);
+        return;
+      }
+
+      await Sharing.shareAsync(result.fileUri, {
+        mimeType: EXCEL_MIME_TYPE,
+        dialogTitle: `${document.title}.xls`,
+      });
+    } catch (actionError) {
+      Alert.alert('Hata', getErrorMessage(actionError, 'Excel oluşturulamadı.'));
+    } finally {
+      resetBusyState();
+    }
+  }, [document?.pages.length, document?.title, documentId, loadDocument, resetBusyState, runAfterTask, setBusyState]);
 
   const handleRetakePage = useCallback(async () => {
     if (busyRef.current || !currentPage) {
@@ -561,7 +685,7 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
         <View style={styles.noticeCard}>
           <Text style={styles.noticeTitle}>Free sürüm</Text>
           <Text style={styles.noticeText}>
-            Free kullanımda oluşturulan PDF çıktısına filigran eklenir.
+            Free kullanımda kaşe eklenmiş PDF çıktısına filigran eklenir.
           </Text>
         </View>
       ) : null}
@@ -631,6 +755,7 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
           <ActionPill title="Kırp" onPress={() => void handleAutoCrop()} disabled={busy || !currentPage} />
           <ActionPill title="Akıllı Sil" onPress={handleOpenSmartErase} disabled={busy || !currentPage} />
           <ActionPill title="Metin Çıkar" onPress={() => void handleExtractText()} disabled={busy || !currentPage} />
+          <ActionPill title="Türkçeye Çevir" onPress={() => void handleTranslateToTurkish()} disabled={busy || !currentPage} />
           <ActionPill title="İmzala" onPress={handleOpenSignaturePad} disabled={busy || !currentPage} />
         </ScrollView>
       </View>
@@ -648,7 +773,8 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
         <View style={styles.outputActions}>
           <PrimaryButton title={document.pdf_path ? 'PDF güncelle' : 'PDF oluştur'} onPress={() => void handleExportPdf()} disabled={busy} />
           <SecondaryButton title="PDF paylaş" onPress={() => void handleSharePdf()} disabled={busy || !document.pdf_path} />
-          <SecondaryButton title="Word paylaş" onPress={() => void handleShareWord()} disabled={busy || !document.word_path} />
+          <SecondaryButton title="Word'e çevir" onPress={() => void handleExportWord()} disabled={busy} />
+          <SecondaryButton title="Excel'e çevir" onPress={() => void handleExportExcel()} disabled={busy} />
           <SecondaryButton title="Kaşe editörünü aç" onPress={() => navigation.navigate('PdfEditor', { documentId })} disabled={busy} />
         </View>
       </View>
@@ -659,6 +785,16 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
         <Text style={styles.metaText}>Belge güncelleme: {formatDate(document.updated_at)}</Text>
         {ocrPreview ? <Text style={styles.ocrPreview}>{ocrPreview}</Text> : null}
       </View>
+
+      {translatedPreview ? (
+        <View style={styles.translationCard}>
+          <Text style={styles.translationTitle}>Türkçe çeviri önizleme</Text>
+          <Text style={styles.translationMeta}>
+            Kaynak dil: {getSourceLanguageLabel(translatedSourceLanguage)} • Çeviri zamanı: {formatDate(translatedAt)}
+          </Text>
+          <Text style={styles.translationText}>{translatedPreview}</Text>
+        </View>
+      ) : null}
     </Screen>
   );
 }
@@ -877,6 +1013,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.xl,
     padding: Spacing.lg,
     ...Shadows.sm,
+    marginBottom: Spacing.md,
   },
   metaTitle: {
     ...Typography.titleSmall,
@@ -893,6 +1030,30 @@ const styles = StyleSheet.create({
     color: colors.text,
     lineHeight: 20,
     marginTop: Spacing.sm,
+  },
+  translationCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: Radius.xl,
+    padding: Spacing.lg,
+    ...Shadows.sm,
+  },
+  translationTitle: {
+    ...Typography.titleSmall,
+    color: colors.text,
+    marginBottom: Spacing.xs,
+  },
+  translationMeta: {
+    ...Typography.caption,
+    color: colors.textTertiary,
+    marginBottom: Spacing.sm,
+    fontWeight: '700',
+  },
+  translationText: {
+    ...Typography.bodySmall,
+    color: colors.text,
+    lineHeight: 20,
   },
   errorCard: {
     backgroundColor: colors.card,

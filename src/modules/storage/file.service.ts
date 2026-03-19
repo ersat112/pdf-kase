@@ -4,6 +4,7 @@ const rootDirectory = new Directory(Paths.document, 'pdf-kase');
 const scansDirectory = new Directory(rootDirectory, 'scans');
 const pdfDirectory = new Directory(rootDirectory, 'pdfs');
 const wordsDirectory = new Directory(rootDirectory, 'words');
+const excelsDirectory = new Directory(rootDirectory, 'excels');
 const thumbsDirectory = new Directory(rootDirectory, 'thumbs');
 const assetsDirectory = new Directory(rootDirectory, 'assets');
 
@@ -120,6 +121,7 @@ export async function ensureAppDirectories() {
       createDirectoryIfMissing(scansDirectory);
       createDirectoryIfMissing(pdfDirectory);
       createDirectoryIfMissing(wordsDirectory);
+      createDirectoryIfMissing(excelsDirectory);
       createDirectoryIfMissing(thumbsDirectory);
       createDirectoryIfMissing(assetsDirectory);
     })
@@ -136,6 +138,7 @@ export function getAppDirectories() {
     scansDirectory,
     pdfDirectory,
     wordsDirectory,
+    excelsDirectory,
     thumbsDirectory,
     assetsDirectory,
   };
@@ -229,4 +232,9 @@ export async function writePdfBytes(fileBaseName: string, bytes: Uint8Array) {
 export async function writeWordBytes(fileBaseName: string, bytes: Uint8Array) {
   await ensureAppDirectories();
   return writeBytesIntoDirectory(wordsDirectory, fileBaseName, 'docx', bytes);
+}
+
+export async function writeExcelBytes(fileBaseName: string, bytes: Uint8Array) {
+  await ensureAppDirectories();
+  return writeBytesIntoDirectory(excelsDirectory, fileBaseName, 'xls', bytes);
 }

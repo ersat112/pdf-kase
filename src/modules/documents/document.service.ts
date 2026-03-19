@@ -6,6 +6,10 @@ import { getDb } from '../../db/sqlite';
 import { useBillingStore } from '../../store/useBillingStore';
 import { getAssetById } from '../assets/asset.service';
 import {
+  buildExcelDocumentBytes,
+  type BuildExcelDocumentInput,
+} from '../export/excel-export.service';
+import {
   buildWordDocumentBytes,
   type BuildWordDocumentInput,
 } from '../export/word-export.service';
@@ -30,8 +34,10 @@ import {
   getExtensionFromUri,
   persistImportedImage,
   removeFileIfExists,
+  writeExcelBytes,
   writeWordBytes,
 } from '../storage/file.service';
+import { translateTextToTurkish } from '../translation/translation.service';
 
 export type DashboardStats = {
   documents: number;
@@ -126,6 +132,23 @@ export type WordExportResult = {
   documentId: number;
   textLength: number;
   exportedAt: string;
+};
+
+export type ExcelExportResult = {
+  fileName: string;
+  fileUri: string;
+  contentUri: string;
+  documentId: number;
+  textLength: number;
+  exportedAt: string;
+};
+
+export type TranslateDocumentTextResult = {
+  documentId: number;
+  translatedText: string;
+  sourceLanguage: string | null;
+  targetLanguage: 'tr';
+  translatedAt: string;
 };
 
 type OverlayContent = {
@@ -796,6 +819,33 @@ async function replaceDocumentPageImage(
   }
 }
 
+async function ensureDocumentOcrText(documentId: number) {
+  const document = await getDocumentDetail(documentId);
+
+  if (!document.pages.length) {
+    throw new Error(
+      'Bu belge dışarıdan PDF olarak içe aktarılmış. OCR için önce sayfa görselleri olan bir belge gerekir.',
+    );
+  }
+
+  if (document.ocr_status === 'ready' && typeof document.ocr_text === 'string') {
+    return {
+      document,
+      text: normalizeDocumentText(document.ocr_text),
+      ocrUpdatedAt: document.ocr_updated_at,
+    };
+  }
+
+  const extraction = await extractDocumentText(documentId);
+  const refreshedDocument = await getDocumentDetail(documentId);
+
+  return {
+    document: refreshedDocument,
+    text: extraction.text,
+    ocrUpdatedAt: extraction.extractedAt,
+  };
+}
+
 export async function createDraftFromImportedImage(sourceUri: string) {
   return createDraftFromSourceImages([sourceUri]);
 }
@@ -1235,31 +1285,16 @@ export async function exportDocumentToWord(
   }
 
   const db = await getDb();
-  const document = await getDocumentDetail(documentId);
-
-  if (!document.pages.length) {
-    throw new Error(
-      'Bu belge dışarıdan PDF olarak içe aktarılmış. Word çıktısı için önce sayfa görselleri olan bir belge gerekir.',
-    );
-  }
-
-  let text = document.ocr_text;
-  let ocrUpdatedAt = document.ocr_updated_at;
-
-  if (document.ocr_status !== 'ready' || text === null) {
-    const extraction = await extractDocumentText(documentId);
-    text = extraction.text;
-    ocrUpdatedAt = extraction.extractedAt;
-  }
-
-  const normalizedText = normalizeDocumentText(text);
+  const ensured = await ensureDocumentOcrText(documentId);
+  const document = ensured.document;
+  const normalizedText = normalizeDocumentText(ensured.text);
 
   const wordInput: BuildWordDocumentInput = {
     title: document.title,
     text: normalizedText,
     pageCount: document.pages.length,
     generatedAt: new Date().toISOString(),
-    ocrUpdatedAt,
+    ocrUpdatedAt: ensured.ocrUpdatedAt,
   };
 
   const bytes = await buildWordDocumentBytes(wordInput);
@@ -1298,6 +1333,62 @@ export async function exportDocumentToWord(
     documentId,
     textLength: normalizedText.length,
     exportedAt,
+  };
+}
+
+export async function exportDocumentToExcel(
+  documentId: number,
+): Promise<ExcelExportResult> {
+  if (!isPositiveInteger(documentId)) {
+    throw new Error('Geçersiz belge kimliği.');
+  }
+
+  const ensured = await ensureDocumentOcrText(documentId);
+  const document = ensured.document;
+  const normalizedText = normalizeDocumentText(ensured.text);
+
+  const excelInput: BuildExcelDocumentInput = {
+    title: document.title,
+    text: normalizedText,
+    pageCount: document.pages.length,
+    generatedAt: new Date().toISOString(),
+    ocrUpdatedAt: ensured.ocrUpdatedAt,
+  };
+
+  const bytes = await buildExcelDocumentBytes(excelInput);
+  const excelFile = await writeExcelBytes(document.title, bytes);
+  const exportedAt = new Date().toISOString();
+
+  return {
+    fileName: excelFile.fileName,
+    fileUri: excelFile.fileUri,
+    contentUri: excelFile.contentUri,
+    documentId,
+    textLength: normalizedText.length,
+    exportedAt,
+  };
+}
+
+export async function translateDocumentTextToTurkish(
+  documentId: number,
+): Promise<TranslateDocumentTextResult> {
+  if (!isPositiveInteger(documentId)) {
+    throw new Error('Geçersiz belge kimliği.');
+  }
+
+  const ensured = await ensureDocumentOcrText(documentId);
+
+  const translation = await translateTextToTurkish({
+    text: ensured.text,
+    targetLanguage: 'tr',
+  });
+
+  return {
+    documentId,
+    translatedText: translation.translatedText,
+    sourceLanguage: translation.sourceLanguage,
+    targetLanguage: translation.targetLanguage,
+    translatedAt: translation.translatedAt,
   };
 }
 
@@ -1491,6 +1582,8 @@ export const documentService = {
   getDocumentDetail,
   extractDocumentText,
   exportDocumentToWord,
+  exportDocumentToExcel,
+  translateDocumentTextToTurkish,
   exportDocumentToPdf,
   touchDocument,
 };
