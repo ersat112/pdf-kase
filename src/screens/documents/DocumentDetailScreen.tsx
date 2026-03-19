@@ -19,6 +19,11 @@ import {
 import { Screen } from '../../components/common/Screen';
 import { useAdGate } from '../../hooks/useAdGate';
 import {
+  deleteDocumentPage,
+  moveDocumentPage,
+  type MoveDocumentPageDirection,
+} from '../../modules/documents/document-page.service';
+import {
   appendScannedPagesToDocument,
   autoCropDocumentPage,
   exportDocumentToExcel,
@@ -26,7 +31,6 @@ import {
   exportDocumentToWord,
   extractDocumentText,
   getDocumentDetail,
-  moveDocumentPage,
   replaceDocumentPageFromScan,
   rotateDocumentPageLeft,
   translateDocumentTextToTurkish,
@@ -196,6 +200,40 @@ function SecondaryButton({
   );
 }
 
+function PageActionButton({
+  title,
+  onPress,
+  disabled,
+  danger,
+}: {
+  title: string;
+  onPress: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={({ pressed }) => [
+        styles.pageActionButton,
+        danger && styles.pageActionButtonDanger,
+        disabled && styles.pageActionButtonDisabled,
+        pressed && !disabled && styles.pressed,
+      ]}
+    >
+      <Text
+        style={[
+          styles.pageActionButtonText,
+          danger && styles.pageActionButtonTextDanger,
+        ]}
+      >
+        {title}
+      </Text>
+    </Pressable>
+  );
+}
+
 export function DocumentDetailScreen({ route, navigation }: Props) {
   const { documentId } = route.params;
   const { preloadInterstitial, runAfterTask } = useAdGate();
@@ -214,6 +252,7 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
 
   const mountedRef = useRef(true);
   const busyRef = useRef(false);
+  const pagerScrollRef = useRef<ScrollView | null>(null);
 
   useEffect(() => {
     return () => {
@@ -226,6 +265,21 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
     setTranslatedAt(null);
     setTranslatedSourceLanguage(null);
   }, [documentId]);
+
+  useEffect(() => {
+    if (!document || pagerWidth <= 0) {
+      return;
+    }
+
+    if (currentPageIndex < 0 || currentPageIndex > document.pages.length) {
+      return;
+    }
+
+    pagerScrollRef.current?.scrollTo({
+      x: pagerWidth * currentPageIndex,
+      animated: true,
+    });
+  }, [currentPageIndex, document, pagerWidth]);
 
   const currentPage = document?.pages[currentPageIndex] ?? null;
   const ocrPreview = useMemo(() => buildPreviewText(document?.ocr_text), [document?.ocr_text]);
@@ -581,8 +635,12 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
   }, [currentPage, loadDocument, resetBusyState, setBusyState]);
 
   const handleMovePage = useCallback(
-    async (direction: 'up' | 'down') => {
-      if (busyRef.current || !currentPage || !document) {
+    async (
+      pageId: number,
+      pageIndex: number,
+      direction: MoveDocumentPageDirection,
+    ) => {
+      if (busyRef.current || !document) {
         return;
       }
 
@@ -592,16 +650,63 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
           direction === 'up' ? 'Sayfa yukarı taşınıyor...' : 'Sayfa aşağı taşınıyor...',
         );
 
-        const result = await moveDocumentPage(document.id, currentPage.id, direction);
+        const result = await moveDocumentPage(document.id, pageId, direction);
+
+        if (result.moved) {
+          setCurrentPageIndex((current) => {
+            if (current === result.fromIndex) {
+              return result.toIndex;
+            }
+
+            if (direction === 'up' && current === result.toIndex) {
+              return current + 1;
+            }
+
+            if (direction === 'down' && current === result.toIndex) {
+              return current - 1;
+            }
+
+            return current;
+          });
+        }
+
         await loadDocument();
-        setCurrentPageIndex(result.newIndex);
       } catch (actionError) {
         Alert.alert('Hata', getErrorMessage(actionError, 'Sayfa sırası güncellenemedi.'));
       } finally {
         resetBusyState();
       }
     },
-    [currentPage, document, loadDocument, resetBusyState, setBusyState],
+    [document, loadDocument, resetBusyState, setBusyState],
+  );
+
+  const handleDeletePage = useCallback(
+    async (pageId: number, pageIndex: number) => {
+      if (busyRef.current || !document) {
+        return;
+      }
+
+      try {
+        setBusyState(true, 'Sayfa siliniyor...');
+
+        const result = await deleteDocumentPage(document.id, pageId);
+
+        setCurrentPageIndex((current) => {
+          if (result.deletedIndex < current) {
+            return Math.max(0, current - 1);
+          }
+
+          return current;
+        });
+
+        await loadDocument();
+      } catch (actionError) {
+        Alert.alert('Hata', getErrorMessage(actionError, 'Sayfa silinemedi.'));
+      } finally {
+        resetBusyState();
+      }
+    },
+    [document, loadDocument, resetBusyState, setBusyState],
   );
 
   const handleAddPage = useCallback(async () => {
@@ -754,6 +859,7 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
 
       <View style={styles.pagerCard} onLayout={handlePagerLayout}>
         <ScrollView
+          ref={pagerScrollRef}
           horizontal
           pagingEnabled
           showsHorizontalScrollIndicator={false}
@@ -806,6 +912,57 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
         </ScrollView>
       </View>
 
+      <View style={styles.pageManagerCard}>
+        <View style={styles.pageManagerHeader}>
+          <Text style={styles.pageManagerTitle}>Sayfa yönetimi</Text>
+          <Text style={styles.pageManagerHint}>Seç, sırala, sil</Text>
+        </View>
+
+        <View style={styles.pageManagerList}>
+          {document.pages.map((page, index) => (
+            <View
+              key={page.id}
+              style={[
+                styles.pageManagerRow,
+                index === currentPageIndex && styles.pageManagerRowActive,
+              ]}
+            >
+              <Pressable
+                onPress={() => setCurrentPageIndex(index)}
+                style={({ pressed }) => [
+                  styles.pageManagerMainPressable,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={styles.pageManagerRowTitle}>Sayfa {index + 1}</Text>
+                <Text style={styles.pageManagerRowHint}>
+                  {index === currentPageIndex ? 'Aktif sayfa' : 'Dokun ve aç'}
+                </Text>
+              </Pressable>
+
+              <View style={styles.pageManagerActions}>
+                <PageActionButton
+                  title="↑"
+                  onPress={() => void handleMovePage(page.id, index, 'up')}
+                  disabled={busy || index === 0}
+                />
+                <PageActionButton
+                  title="↓"
+                  onPress={() => void handleMovePage(page.id, index, 'down')}
+                  disabled={busy || index === document.pages.length - 1}
+                />
+                <PageActionButton
+                  title="Sil"
+                  onPress={() => void handleDeletePage(page.id, index)}
+                  disabled={busy || document.pages.length <= 1}
+                  danger
+                />
+              </View>
+            </View>
+          ))}
+        </View>
+      </View>
+
       <View style={styles.bottomToolbarCard}>
         <ScrollView
           horizontal
@@ -813,8 +970,6 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
           contentContainerStyle={styles.bottomToolbarRow}
         >
           <ActionPill title="Tekrar al" onPress={() => void handleRetakePage()} disabled={busy || !currentPage} />
-          <ActionPill title="Yukarı taşı" onPress={() => void handleMovePage('up')} disabled={busy || !currentPage || currentPageIndex === 0} />
-          <ActionPill title="Aşağı taşı" onPress={() => void handleMovePage('down')} disabled={busy || !currentPage || currentPageIndex >= document.pages.length - 1} />
           <ActionPill title="Sola döndür" onPress={() => void handleRotateLeft()} disabled={busy || !currentPage} />
           <ActionPill title="Kırp" onPress={() => void handleAutoCrop()} disabled={busy || !currentPage} />
           <ActionPill title="Akıllı Sil" onPress={handleOpenSmartErase} disabled={busy || !currentPage} />
@@ -1007,6 +1162,91 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 22,
     marginBottom: Spacing.lg,
+  },
+  pageManagerCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: Radius.xl,
+    padding: Spacing.lg,
+    marginBottom: Spacing.md,
+    ...Shadows.sm,
+  },
+  pageManagerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+    gap: Spacing.md,
+  },
+  pageManagerTitle: {
+    ...Typography.titleSmall,
+    color: colors.text,
+  },
+  pageManagerHint: {
+    ...Typography.bodySmall,
+    color: colors.textTertiary,
+    fontWeight: '700',
+  },
+  pageManagerList: {
+    gap: Spacing.sm,
+  },
+  pageManagerRow: {
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+    padding: Spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  pageManagerRowActive: {
+    borderColor: colors.primary,
+  },
+  pageManagerMainPressable: {
+    flex: 1,
+    gap: 4,
+  },
+  pageManagerRowTitle: {
+    ...Typography.body,
+    color: colors.text,
+    fontWeight: '800',
+  },
+  pageManagerRowHint: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+  },
+  pageManagerActions: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  pageActionButton: {
+    minWidth: 42,
+    minHeight: 36,
+    paddingHorizontal: 10,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pageActionButtonDanger: {
+    backgroundColor: '#2A1620',
+    borderColor: '#4B2632',
+  },
+  pageActionButtonDisabled: {
+    opacity: 0.45,
+  },
+  pageActionButtonText: {
+    color: colors.text,
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  pageActionButtonTextDanger: {
+    color: '#FCA5A5',
   },
   bottomToolbarCard: {
     marginBottom: Spacing.md,
