@@ -1,25 +1,65 @@
-import { Href, Link } from 'expo-router';
-import { openBrowserAsync, WebBrowserPresentationStyle } from 'expo-web-browser';
-import { type ComponentProps } from 'react';
+import React from 'react';
+import {
+  Linking,
+  Pressable,
+  Text,
+  type GestureResponderEvent,
+} from 'react-native';
 
-type Props = Omit<ComponentProps<typeof Link>, 'href'> & { href: Href & string };
+type ExternalLinkProps = {
+  href: string;
+  asChild?: boolean;
+  children?: React.ReactNode;
+};
 
-export function ExternalLink({ href, ...rest }: Props) {
+async function openExternalHref(href: string) {
+  const trimmed = href.trim();
+
+  if (!trimmed) {
+    return;
+  }
+
+  const supported = await Linking.canOpenURL(trimmed);
+
+  if (!supported) {
+    throw new Error('Bağlantı açılamadı.');
+  }
+
+  await Linking.openURL(trimmed);
+}
+
+export function ExternalLink({
+  href,
+  asChild = false,
+  children,
+}: ExternalLinkProps) {
+  const handlePress = async (
+    originalOnPress?: ((event: GestureResponderEvent) => void) | undefined,
+    event?: GestureResponderEvent,
+  ) => {
+    originalOnPress?.(event as GestureResponderEvent);
+    await openExternalHref(href);
+  };
+
+  if (asChild && React.isValidElement(children)) {
+    const child = children as React.ReactElement<{
+      onPress?: (event: GestureResponderEvent) => void;
+    }>;
+
+    return React.cloneElement(child, {
+      onPress: (event: GestureResponderEvent) => {
+        void handlePress(child.props.onPress, event);
+      },
+    });
+  }
+
   return (
-    <Link
-      target="_blank"
-      {...rest}
-      href={href}
-      onPress={async (event) => {
-        if (process.env.EXPO_OS !== 'web') {
-          // Prevent the default behavior of linking to the default browser on native.
-          event.preventDefault();
-          // Open the link in an in-app browser.
-          await openBrowserAsync(href, {
-            presentationStyle: WebBrowserPresentationStyle.AUTOMATIC,
-          });
-        }
+    <Pressable
+      onPress={(event) => {
+        void handlePress(undefined, event);
       }}
-    />
+    >
+      {typeof children === 'string' ? <Text>{children}</Text> : children}
+    </Pressable>
   );
 }

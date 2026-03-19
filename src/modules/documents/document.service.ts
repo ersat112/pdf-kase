@@ -1434,6 +1434,8 @@ export async function exportDocumentToPdf(documentId: number) {
 
     const previousPdfPath = document.pdf_path;
     const isPro = useBillingStore.getState().isPro;
+    const shouldAddFreeWatermark =
+      !isPro && resolvedOverlays.some((overlay) => overlay.type === 'stamp');
 
     const pdf = await buildPdfFromImages({
       title: document.title,
@@ -1442,7 +1444,7 @@ export async function exportDocumentToPdf(documentId: number) {
       author: 'PDF Kaşe',
       subject: 'Taranmış belge',
       creator: 'PDF Kaşe',
-      addFreeWatermark: !isPro,
+      addFreeWatermark: shouldAddFreeWatermark,
     });
 
     await db.runAsync(

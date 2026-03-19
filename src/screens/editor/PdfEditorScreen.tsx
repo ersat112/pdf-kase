@@ -136,6 +136,7 @@ const DEFAULT_STAMP_WIDTH_BY_PRESET: Record<StampSizePreset, number> = {
 };
 
 const OVERLAY_SCALE_STEP = 0.03;
+const OVERLAY_OPACITY_STEP = 0.1;
 const OVERLAY_MIN_WIDTH = 0.08;
 const OVERLAY_MAX_WIDTH = 0.7;
 const OVERLAY_MIN_HEIGHT = 0.04;
@@ -300,6 +301,17 @@ function formatOverlayPosition(overlay: Pick<DocumentOverlay, 'x' | 'y'>) {
   const y = Math.round(overlay.y * 100);
 
   return `X:${x}% • Y:${y}%`;
+}
+
+function formatOverlaySize(overlay: Pick<DocumentOverlay, 'width' | 'height'>) {
+  const width = Math.round(overlay.width * 100);
+  const height = Math.round(overlay.height * 100);
+
+  return `G:${width}% • Y:${height}%`;
+}
+
+function formatOverlayOpacity(opacity: number) {
+  return `Opaklık ${Math.round(opacity * 100)}%`;
 }
 
 function buildOverlayDraftFromOverlay(overlay: DocumentOverlay): OverlayDraft {
@@ -1085,6 +1097,40 @@ export function PdfEditorScreen({ route, navigation }: Props) {
     [reloadCurrentPageOverlays, selectedOverlay],
   );
 
+  const updateSelectedOverlayOpacity = useCallback(
+    async (direction: 'down' | 'up') => {
+      if (!selectedOverlay) {
+        Alert.alert('Öğe seç', 'Önce opaklığını değiştirmek istediğin öğeyi seç.');
+        return;
+      }
+
+      const nextOpacity = clamp01(
+        selectedOverlay.opacity + (direction === 'up' ? OVERLAY_OPACITY_STEP : -OVERLAY_OPACITY_STEP),
+      );
+
+      try {
+        setBusy(true);
+
+        await updateOverlayTransform({
+          overlayId: selectedOverlay.id,
+          x: selectedOverlay.x,
+          y: selectedOverlay.y,
+          width: selectedOverlay.width,
+          height: selectedOverlay.height,
+          rotation: selectedOverlay.rotation,
+          opacity: nextOpacity,
+        });
+
+        await reloadCurrentPageOverlays();
+      } catch (error) {
+        Alert.alert('Hata', getErrorMessage(error, 'Opaklık güncellenemedi.'));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [reloadCurrentPageOverlays, selectedOverlay],
+  );
+
   const handleUpdateSelectedSignatureColor = useCallback(
     async (strokeColor: string) => {
       if (!selectedOverlay || selectedOverlay.type !== 'signature') {
@@ -1293,7 +1339,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
       </View>
 
       <View style={styles.sizeCard}>
-        <Text style={styles.sizeCardTitle}>Kütüphane seçimi</Text>
+        <Text style={styles.sizeCardTitle}>Kütüphane</Text>
 
         <View style={styles.sizeRow}>
           <ToolbarButton
@@ -1348,7 +1394,10 @@ export function PdfEditorScreen({ route, navigation }: Props) {
         <View style={styles.adjustCard}>
           <Text style={styles.adjustTitle}>Seçili öğe ayarları</Text>
           <Text style={styles.adjustHint}>
-            {formatOverlayPosition(selectedOverlay)} • Tutup sürükle, sağ alt köşeden boyutlandır
+            {selectedOverlay.type === 'stamp' ? 'Kaşe' : 'İmza'} • {formatOverlayPosition(selectedOverlay)}
+          </Text>
+          <Text style={styles.adjustHint}>
+            {formatOverlaySize(selectedOverlay)} • {formatOverlayOpacity(selectedOverlay.opacity)}
           </Text>
 
           {selectedOverlay.type === 'signature' &&
@@ -1386,6 +1435,14 @@ export function PdfEditorScreen({ route, navigation }: Props) {
             </>
           ) : null}
 
+          {selectedOverlay.type === 'signature' &&
+          selectedSignatureInfo &&
+          selectedSignatureInfo.strokes.length === 0 ? (
+            <Text style={styles.readySignatureHint}>
+              Hazır imza seçili. Konum, boyut ve opaklık düzenlenebilir.
+            </Text>
+          ) : null}
+
           <View style={styles.adjustRow}>
             <ToolbarButton
               title="Küçült"
@@ -1398,6 +1455,23 @@ export function PdfEditorScreen({ route, navigation }: Props) {
               title="Büyüt"
               onPress={() => {
                 void updateSelectedOverlaySize('up');
+              }}
+              disabled={busy}
+            />
+          </View>
+
+          <View style={styles.adjustRow}>
+            <ToolbarButton
+              title="Daha saydam"
+              onPress={() => {
+                void updateSelectedOverlayOpacity('down');
+              }}
+              disabled={busy}
+            />
+            <ToolbarButton
+              title="Daha belirgin"
+              onPress={() => {
+                void updateSelectedOverlayOpacity('up');
               }}
               disabled={busy}
             />
@@ -1497,7 +1571,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
           </Text>
           <Text style={styles.emptyAssetText}>
             {activeLibraryType === 'stamp'
-              ? 'Kaşe ekleyip tekrar kullanabilir, sonra aynı kaşeyi farklı belgelere yerleştirebilirsin.'
+              ? 'Kaşe ekleyip arka planını temizledikten sonra tekrar kullanabilir, farklı belgelere yerleştirebilirsin.'
               : 'İmza ekranından kaydettiğin imzalar burada görünür. Hazır imzayı seçip boş alana dokunarak tekrar yerleştirebilirsin.'}
           </Text>
         </View>
@@ -1569,6 +1643,10 @@ export function PdfEditorScreen({ route, navigation }: Props) {
                         ? `Serbest imza • ${formatOverlayPosition(overlay)}`
                         : `${asset?.name ?? 'Hazır imza'} • ${formatOverlayPosition(overlay)}`
                       : `${asset?.name ?? 'Bilinmeyen kaşe'} • ${formatOverlayPosition(overlay)}`}
+                  </Text>
+
+                  <Text style={styles.overlayRowHint}>
+                    {formatOverlaySize(overlay)} • {formatOverlayOpacity(overlay.opacity)}
                   </Text>
 
                   {isSignature && signature ? (
@@ -1775,6 +1853,10 @@ const styles = StyleSheet.create({
   colorPaletteRow: {
     gap: 10,
     paddingRight: 16,
+  },
+  readySignatureHint: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
   },
   pressed: {
     opacity: 0.92,

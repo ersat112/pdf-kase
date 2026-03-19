@@ -294,26 +294,21 @@ function drawFreeWatermark(params: {
   font: Awaited<ReturnType<PDFDocument['embedFont']>>;
 }) {
   const { page, font } = params;
-  const centerX = A4_WIDTH / 2;
-  const centerY = A4_HEIGHT / 2;
 
-  page.drawText(normalizeWinAnsiText('PDF Kase Free'), {
-    x: centerX - 150,
+  const watermarkText = normalizeWinAnsiText('ErEnesAl');
+  const fontSize = 56;
+  const textWidth = font.widthOfTextAtSize(watermarkText, fontSize);
+  const centerX = (A4_WIDTH - textWidth) / 2;
+  const centerY = (A4_HEIGHT - fontSize) / 2;
+
+  page.drawText(watermarkText, {
+    x: centerX,
     y: centerY,
-    size: 34,
+    size: fontSize,
     font,
-    color: rgb(0.55, 0.55, 0.55),
-    opacity: 0.14,
-    rotate: degrees(-35),
-  });
-
-  page.drawText(normalizeWinAnsiText('Free surum PDF ciktisi'), {
-    x: PAGE_MARGIN,
-    y: A4_HEIGHT - 18,
-    size: 10,
-    font,
-    color: rgb(0.5, 0.5, 0.5),
-    opacity: 0.8,
+    color: rgb(0.62, 0.62, 0.62),
+    opacity: 0.18,
+    rotate: degrees(-32),
   });
 }
 
