@@ -3,23 +3,21 @@ import { useFocusEffect } from '@react-navigation/native';
 import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Image,
-  Platform,
   Pressable,
   ScrollView,
-  Share,
   StyleSheet,
   Text,
-  TextInput,
   View,
-  type StyleProp,
-  type ViewStyle,
 } from 'react-native';
 
 import { BannerStrip } from '../../components/ads/BannerStrip';
 import { executeToolPrimaryAction } from '../../features/tools/tools.actions';
-import { findToolByKey } from '../../features/tools/tools.registry';
+import {
+  findToolByKey,
+  homePrimaryActionKeys,
+  homeSecondaryToolKeys,
+} from '../../features/tools/tools.registry';
 import { useAdGate } from '../../hooks/useAdGate';
 import { documentService } from '../../modules/documents/document.service';
 import type { AppTabScreenProps } from '../../navigation/types';
@@ -39,6 +37,7 @@ type HomeDocument = {
   id: number;
   title?: string | null;
   status?: string | null;
+  ocr_status?: string | null;
   pageCount?: number | null;
   page_count?: number | null;
   pdfPath?: string | null;
@@ -53,79 +52,83 @@ type HomeDocument = {
 
 type DocumentServiceShape = typeof documentService & {
   getLatestDocument?: () => Promise<HomeDocument | null>;
-  listDocuments?: () => Promise<HomeDocument[]>;
-  getDocuments?: () => Promise<HomeDocument[]>;
+  listDocuments?: (limit?: number) => Promise<HomeDocument[]>;
+  getDocuments?: (limit?: number) => Promise<HomeDocument[]>;
+  getRecentDocuments?: (limit?: number) => Promise<HomeDocument[]>;
 };
 
-type QuickActionItem = {
-  key:
-    | 'scan'
-    | 'pdf-tools'
-    | 'import-images'
-    | 'import-files'
-    | 'id-card'
-    | 'ocr'
-    | 'id-photo'
-    | 'all';
+type HomeActionConfig = {
+  toolKey: string;
   title: string;
+  subtitle: string;
   icon: React.ComponentProps<typeof Ionicons>['name'];
 };
 
-type NativePdfRendererProps = {
-  source: string;
-  singlePage?: boolean;
-  maxZoom?: number;
-  distanceBetweenPages?: number;
-  maxPageResolution?: number;
-  style?: StyleProp<ViewStyle>;
-};
-
-const QUICK_ACTIONS: QuickActionItem[] = [
+const PRIMARY_ACTIONS: HomeActionConfig[] = [
   {
-    key: 'scan',
+    toolKey: 'scan-camera',
     title: 'Tara',
+    subtitle: 'Kamera ile belge tara',
     icon: 'scan-outline',
   },
   {
-    key: 'pdf-tools',
-    title: 'Pdf Araçları',
-    icon: 'construct-outline',
+    toolKey: 'import-files',
+    title: 'PDF İçe Aktar',
+    subtitle: 'PDF ve dosya al',
+    icon: 'document-attach-outline',
   },
   {
-    key: 'import-images',
-    title: 'Görüntüleri İçe Aktar',
+    toolKey: 'import-images',
+    title: 'Galeriden Al',
+    subtitle: 'Görselleri belge yap',
     icon: 'images-outline',
   },
   {
-    key: 'import-files',
-    title: 'Dosyaları İçe Aktar',
-    icon: 'folder-open-outline',
-  },
-  {
-    key: 'id-card',
-    title: 'Kimlik Kartları',
-    icon: 'card-outline',
-  },
-  {
-    key: 'ocr',
-    title: 'Metin Çıkar',
-    icon: 'document-text-outline',
-  },
-  {
-    key: 'id-photo',
-    title: 'Kimlik Fotoğraf Yapıcı',
-    icon: 'person-circle-outline',
-  },
-  {
-    key: 'all',
-    title: 'Tümü',
-    icon: 'grid-outline',
+    toolKey: 'edit-stamp',
+    title: 'Kaşe & İmza',
+    subtitle: 'Kütüphane ve yönetim',
+    icon: 'color-wand-outline',
   },
 ];
 
-function normalizeText(value: string) {
-  return value.trim().toLocaleLowerCase('tr-TR');
-}
+const SECONDARY_ACTIONS: HomeActionConfig[] = [
+  {
+    toolKey: 'scan-ocr-text',
+    title: 'OCR',
+    subtitle: 'Metni çıkar',
+    icon: 'document-text-outline',
+  },
+  {
+    toolKey: 'scan-translate',
+    title: 'Çeviri',
+    subtitle: 'Türkçeye çevir',
+    icon: 'language-outline',
+  },
+  {
+    toolKey: 'edit-smart-erase',
+    title: 'Akıllı Sil',
+    subtitle: 'İzleri temizle',
+    icon: 'sparkles-outline',
+  },
+  {
+    toolKey: 'convert-word',
+    title: 'Word',
+    subtitle: 'DOCX çıktısı',
+    icon: 'reader-outline',
+  },
+  {
+    toolKey: 'convert-excel',
+    title: 'Excel',
+    subtitle: 'XLS çıktısı',
+    icon: 'grid-outline',
+  },
+  {
+    toolKey: 'utility-tools-hub',
+    title: 'Tüm Araçlar',
+    subtitle: 'Araç merkezini aç',
+    icon: 'apps-outline',
+  },
+];
 
 function resolveDocumentTitle(document: HomeDocument) {
   const title = document.title?.trim();
@@ -162,7 +165,27 @@ function resolveDocumentPageCount(document: HomeDocument) {
     return pageCount;
   }
 
-  return null;
+  return 0;
+}
+
+function resolveDocumentStatus(document: HomeDocument) {
+  if (document.status === 'draft') {
+    return 'Taslak';
+  }
+
+  if (document.status === 'ready' && document.ocr_status === 'ready') {
+    return 'OCR Hazır';
+  }
+
+  if (document.status === 'ready' && resolveDocumentPdfPath(document)) {
+    return 'PDF Hazır';
+  }
+
+  if (document.status === 'ready') {
+    return 'Hazır';
+  }
+
+  return 'Belge';
 }
 
 function formatDocumentDate(value: string | null) {
@@ -189,8 +212,16 @@ function formatDocumentDate(value: string | null) {
 }
 
 async function resolveDocuments(service: DocumentServiceShape) {
+  if (typeof service.getRecentDocuments === 'function') {
+    const list = await service.getRecentDocuments(12);
+
+    if (Array.isArray(list)) {
+      return list;
+    }
+  }
+
   if (typeof service.listDocuments === 'function') {
-    const list = await service.listDocuments();
+    const list = await service.listDocuments(12);
 
     if (Array.isArray(list)) {
       return list;
@@ -198,7 +229,7 @@ async function resolveDocuments(service: DocumentServiceShape) {
   }
 
   if (typeof service.getDocuments === 'function') {
-    const list = await service.getDocuments();
+    const list = await service.getDocuments(12);
 
     if (Array.isArray(list)) {
       return list;
@@ -222,12 +253,14 @@ function sortDocuments(list: HomeDocument[]) {
   });
 }
 
-function QuickActionTile({
+function PrimaryActionCard({
   title,
+  subtitle,
   icon,
   onPress,
 }: {
   title: string;
+  subtitle: string;
   icon: React.ComponentProps<typeof Ionicons>['name'];
   onPress: () => void;
 }) {
@@ -235,163 +268,226 @@ function QuickActionTile({
     <Pressable
       onPress={onPress}
       style={({ pressed }) => [
-        styles.quickActionTile,
+        styles.primaryActionCard,
         pressed && styles.cardPressed,
       ]}
     >
-      <View style={styles.quickActionIconWrap}>
+      <View style={styles.primaryActionIconWrap}>
         <Ionicons name={icon} size={22} color={colors.primary} />
       </View>
-      <Text numberOfLines={2} style={styles.quickActionTitle}>
+
+      <View style={styles.primaryActionTextWrap}>
+        <Text numberOfLines={1} style={styles.primaryActionTitle}>
+          {title}
+        </Text>
+        <Text numberOfLines={2} style={styles.primaryActionSubtitle}>
+          {subtitle}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function SecondaryToolCard({
+  title,
+  subtitle,
+  icon,
+  onPress,
+}: {
+  title: string;
+  subtitle: string;
+  icon: React.ComponentProps<typeof Ionicons>['name'];
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.secondaryToolCard,
+        pressed && styles.cardPressed,
+      ]}
+    >
+      <View style={styles.secondaryToolIconWrap}>
+        <Ionicons name={icon} size={18} color={colors.primary} />
+      </View>
+
+      <Text numberOfLines={1} style={styles.secondaryToolTitle}>
         {title}
+      </Text>
+      <Text numberOfLines={2} style={styles.secondaryToolSubtitle}>
+        {subtitle}
       </Text>
     </Pressable>
   );
 }
 
-function RecentDocumentThumbnail({
-  thumbnailPath,
-  pdfPath,
+function ContinueDocumentCard({
+  document,
+  onPress,
+  onOpenLibrary,
 }: {
-  thumbnailPath: string | null;
-  pdfPath: string | null;
+  document: HomeDocument | null;
+  onPress: () => void;
+  onOpenLibrary: () => void;
 }) {
-  const NativePdfRendererView = useMemo(() => {
-    if (Platform.OS === 'web') {
-      return null;
-    }
-
-    try {
-      return require('react-native-pdf-renderer')
-        .default as React.ComponentType<NativePdfRendererProps>;
-    } catch {
-      return null;
-    }
-  }, []);
-
-  if (thumbnailPath) {
+  if (!document) {
     return (
-      <View style={styles.thumbnailWrap}>
-        <Image
-          source={{ uri: thumbnailPath }}
-          resizeMode="cover"
-          style={styles.thumbnailImage}
-        />
-      </View>
-    );
-  }
+      <View style={styles.continueCard}>
+        <View style={styles.continueHeaderRow}>
+          <View style={styles.continueHeaderTextWrap}>
+            <Text style={styles.continueEyebrow}>Hızlı başlangıç</Text>
+            <Text style={styles.continueTitle}>İlk belgeni oluştur</Text>
+            <Text style={styles.continueSubtitle}>
+              Kamera ile tara, PDF içe aktar veya galeriden yeni belge başlat.
+            </Text>
+          </View>
+        </View>
 
-  if (pdfPath && NativePdfRendererView) {
-    return (
-      <View style={styles.thumbnailWrap}>
-        <View style={styles.thumbnailPdfViewport}>
-          <NativePdfRendererView
-            source={pdfPath}
-            singlePage
-            maxZoom={1}
-            distanceBetweenPages={0}
-            maxPageResolution={512}
-            style={styles.thumbnailPdf}
-          />
+        <View style={styles.continueFooterRow}>
+          <Pressable
+            onPress={onPress}
+            style={({ pressed }) => [
+              styles.continuePrimaryButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={styles.continuePrimaryButtonText}>Taramayı başlat</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={onOpenLibrary}
+            style={({ pressed }) => [
+              styles.continueSecondaryButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={styles.continueSecondaryButtonText}>Belgelerim</Text>
+          </Pressable>
         </View>
       </View>
     );
   }
 
-  return (
-    <View style={styles.thumbnailWrap}>
-      <View style={styles.thumbnailFallback}>
-        <Ionicons name="document-text-outline" size={22} color={colors.textTertiary} />
-      </View>
-    </View>
-  );
-}
-
-function RecentDocumentCard({
-  document,
-  selected,
-  onToggleSelect,
-  onShare,
-  onView,
-  onToWord,
-}: {
-  document: HomeDocument;
-  selected: boolean;
-  onToggleSelect: () => void;
-  onShare: () => void;
-  onView: () => void;
-  onToWord: () => void;
-}) {
   const title = resolveDocumentTitle(document);
-  const pageCount = resolveDocumentPageCount(document);
+  const status = resolveDocumentStatus(document);
   const updatedAt = formatDocumentDate(resolveDocumentUpdatedAt(document));
+  const pageCount = resolveDocumentPageCount(document);
   const thumbnailPath = resolveDocumentThumbnailPath(document);
-  const pdfPath = resolveDocumentPdfPath(document);
 
   return (
-    <View style={styles.recentCard}>
-      <View style={styles.recentBodyRow}>
-        <RecentDocumentThumbnail thumbnailPath={thumbnailPath} pdfPath={pdfPath} />
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.continueCard,
+        pressed && styles.cardPressed,
+      ]}
+    >
+      <View style={styles.continueHeaderRow}>
+        <View style={styles.continueHeaderTextWrap}>
+          <Text style={styles.continueEyebrow}>Kaldığın yerden devam et</Text>
+          <Text numberOfLines={1} style={styles.continueTitle}>
+            {title}
+          </Text>
+          <Text numberOfLines={2} style={styles.continueSubtitle}>
+            {pageCount > 0 ? `${pageCount} sayfa` : 'Belge'} • {updatedAt}
+          </Text>
+        </View>
 
-        <View style={styles.recentMainColumn}>
-          <View style={styles.recentCardHeader}>
-            <View style={styles.recentCardTextWrap}>
-              <Text numberOfLines={1} style={styles.recentCardTitle}>
-                {title}
-              </Text>
-              <Text style={styles.recentCardMeta}>
-                {pageCount ? `${pageCount} sayfa • ` : 'PDF • '}
-                {updatedAt}
-              </Text>
+        <View style={styles.continueStatusChip}>
+          <Text style={styles.continueStatusChipText}>{status}</Text>
+        </View>
+      </View>
+
+      <View style={styles.continuePreviewRow}>
+        <View style={styles.continuePreviewWrap}>
+          {thumbnailPath ? (
+            <Image
+              source={{ uri: thumbnailPath }}
+              resizeMode="cover"
+              style={styles.continuePreviewImage}
+            />
+          ) : (
+            <View style={styles.continuePreviewFallback}>
+              <Ionicons
+                name="document-text-outline"
+                size={24}
+                color={colors.textTertiary}
+              />
+            </View>
+          )}
+        </View>
+
+        <View style={styles.continueSideColumn}>
+          <Text style={styles.continueSideTitle}>Son belge</Text>
+          <Text style={styles.continueSideText}>
+            Düzenleme, OCR, çeviri, kaşe ve export akışına tek dokunuşla dön.
+          </Text>
+
+          <View style={styles.continueFooterRow}>
+            <View style={styles.continuePrimaryButton}>
+              <Text style={styles.continuePrimaryButtonText}>Devam et</Text>
             </View>
 
             <Pressable
-              onPress={onToggleSelect}
-              hitSlop={10}
-              style={({ pressed }) => [styles.checkboxButton, pressed && styles.pressed]}
-            >
-              <Ionicons
-                name={selected ? 'checkbox' : 'square-outline'}
-                size={22}
-                color={selected ? colors.primary : colors.textTertiary}
-              />
-            </Pressable>
-          </View>
-
-          <View style={styles.recentActionRow}>
-            <Pressable
-              onPress={onShare}
+              onPress={onOpenLibrary}
               style={({ pressed }) => [
-                styles.inlineActionButton,
+                styles.continueSecondaryButton,
                 pressed && styles.pressed,
               ]}
             >
-              <Text style={styles.inlineActionText}>Paylaş</Text>
-            </Pressable>
-
-            <Pressable
-              onPress={onToWord}
-              style={({ pressed }) => [
-                styles.inlineActionButton,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text style={styles.inlineActionText}>To Word</Text>
-            </Pressable>
-
-            <Pressable
-              onPress={onView}
-              style={({ pressed }) => [
-                styles.inlineActionButtonPrimary,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text style={styles.inlineActionTextPrimary}>Görüntüle</Text>
+              <Text style={styles.continueSecondaryButtonText}>Tümü</Text>
             </Pressable>
           </View>
         </View>
       </View>
-    </View>
+    </Pressable>
+  );
+}
+
+function RecentDocumentMiniCard({
+  document,
+  onPress,
+}: {
+  document: HomeDocument;
+  onPress: () => void;
+}) {
+  const title = resolveDocumentTitle(document);
+  const status = resolveDocumentStatus(document);
+  const thumbnailPath = resolveDocumentThumbnailPath(document);
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.recentMiniCard,
+        pressed && styles.cardPressed,
+      ]}
+    >
+      <View style={styles.recentMiniThumbWrap}>
+        {thumbnailPath ? (
+          <Image
+            source={{ uri: thumbnailPath }}
+            resizeMode="cover"
+            style={styles.recentMiniThumb}
+          />
+        ) : (
+          <View style={styles.recentMiniThumbFallback}>
+            <Ionicons
+              name="document-text-outline"
+              size={18}
+              color={colors.textTertiary}
+            />
+          </View>
+        )}
+      </View>
+
+      <Text numberOfLines={1} style={styles.recentMiniTitle}>
+        {title}
+      </Text>
+      <Text numberOfLines={1} style={styles.recentMiniMeta}>
+        {status}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -401,10 +497,6 @@ export function HomeScreen({ navigation }: Props) {
 
   const [documents, setDocuments] = useState<HomeDocument[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedDocumentIds, setSelectedDocumentIds] = useState<number[]>([]);
-
-  const convertWordTool = useMemo(() => findToolByKey('convert-word') ?? null, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -444,183 +536,210 @@ export function HomeScreen({ navigation }: Props) {
     }, [preloadInterstitial]),
   );
 
-  const normalizedQuery = normalizeText(searchQuery);
+  const latestDocument = documents[0] ?? null;
+  const recentDocuments = documents.slice(0, 8);
 
-  const filteredQuickActions = useMemo(() => {
-    if (!normalizedQuery) {
-      return QUICK_ACTIONS;
-    }
-
-    return QUICK_ACTIONS.filter((item) =>
-      item.title.toLocaleLowerCase('tr-TR').includes(normalizedQuery),
-    );
-  }, [normalizedQuery]);
-
-  const filteredDocuments = useMemo(() => {
-    if (!normalizedQuery) {
-      return documents;
-    }
-
-    return documents.filter((document) =>
-      resolveDocumentTitle(document)
-        .toLocaleLowerCase('tr-TR')
-        .includes(normalizedQuery),
-    );
-  }, [documents, normalizedQuery]);
-
-  const recentDocuments = filteredDocuments.slice(0, 8);
-
-  const toggleDocumentSelection = useCallback((documentId: number) => {
-    setSelectedDocumentIds((current) =>
-      current.includes(documentId)
-        ? current.filter((id) => id !== documentId)
-        : [...current, documentId],
-    );
+  const primaryActions = useMemo(() => {
+    return homePrimaryActionKeys
+      .map((key) => PRIMARY_ACTIONS.find((item) => item.toolKey === key))
+      .filter((item): item is HomeActionConfig => Boolean(item))
+      .filter((item) => Boolean(findToolByKey(item.toolKey)));
   }, []);
 
-  const handleShareDocument = useCallback(async (document: HomeDocument) => {
-    const title = resolveDocumentTitle(document);
-    const path = resolveDocumentPdfPath(document);
-
-    try {
-      await Share.share({
-        title,
-        message: path ? `${title}\n${path}` : `${title} belgesini paylaş`,
-        url: path ?? undefined,
-      });
-    } catch (error) {
-      console.warn('[HomeScreen] Share failed:', error);
-      Alert.alert('Paylaşım başarısız', 'Belge paylaşılırken hata oluştu.');
-    }
+  const secondaryActions = useMemo(() => {
+    return homeSecondaryToolKeys
+      .map((key) => SECONDARY_ACTIONS.find((item) => item.toolKey === key))
+      .filter((item): item is HomeActionConfig => Boolean(item))
+      .filter((item) => Boolean(findToolByKey(item.toolKey)));
   }, []);
 
-  const handleOpenDocument = useCallback(
-    (documentId: number) => {
-      navigation.navigate('DocumentDetail', { documentId });
+  const handleToolPress = useCallback(
+    (toolKey: string) => {
+      const tool = findToolByKey(toolKey);
+
+      if (!tool) {
+        return;
+      }
+
+      void executeToolPrimaryAction(tool, navigation);
     },
     [navigation],
   );
 
-  const handleToWord = useCallback(() => {
-    if (!convertWordTool) {
-      Alert.alert('Araç bulunamadı', 'Word dönüşüm aracı kayıtlı değil.');
+  const handleOpenLatest = useCallback(() => {
+    if (!latestDocument) {
+      const scanTool = findToolByKey('scan-camera');
+
+      if (!scanTool) {
+        return;
+      }
+
+      void executeToolPrimaryAction(scanTool, navigation);
       return;
     }
 
-    void executeToolPrimaryAction(convertWordTool, navigation);
-  }, [convertWordTool, navigation]);
+    navigation.navigate('DocumentDetail', {
+      documentId: latestDocument.id,
+    });
+  }, [latestDocument, navigation]);
 
-  const handleQuickActionPress = useCallback(
-    (action: QuickActionItem) => {
-      switch (action.key) {
-        case 'scan':
-          navigation.navigate('ScanEntry', { initialMode: 'camera' });
-          return;
-        case 'pdf-tools':
-        case 'all':
-          navigation.navigate('ToolsTab');
-          return;
-        case 'import-images':
-          navigation.navigate('ScanEntry', { initialMode: 'import-images' });
-          return;
-        case 'import-files':
-          navigation.navigate('ScanEntry', { initialMode: 'import-files' });
-          return;
-        case 'id-card':
-          navigation.navigate('ScanEntry', { initialMode: 'id-card' });
-          return;
-        case 'ocr':
-          navigation.navigate('ScanEntry', { initialMode: 'ocr' });
-          return;
-        case 'id-photo':
-          navigation.navigate('ScanEntry', { initialMode: 'id-photo' });
-          return;
-        default:
-          return;
-      }
-    },
-    [navigation],
-  );
+  const handleOpenDocuments = useCallback(() => {
+    navigation.navigate('DocumentsTab');
+  }, [navigation]);
+
+  const documentCountLabel = loading
+    ? 'Belgeler hazırlanıyor'
+    : `${documents.length} belge`;
 
   return (
     <View style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.searchCard}>
-          <Ionicons name="search-outline" size={20} color={colors.textTertiary} />
-          <TextInput
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder="Uygulama içinde ara"
-            placeholderTextColor={colors.textTertiary}
-            style={styles.searchInput}
-          />
-        </View>
-
-        <View style={styles.quickSection}>
-          <View style={styles.quickGrid}>
-            {filteredQuickActions.map((item) => (
-              <QuickActionTile
-                key={item.key}
-                title={item.title}
-                icon={item.icon}
-                onPress={() => handleQuickActionPress(item)}
-              />
-            ))}
+        <View style={styles.heroRow}>
+          <View style={styles.heroTextWrap}>
+            <Text style={styles.heroTitle}>PDF Kaşe</Text>
+            <Text style={styles.heroSubtitle}>
+              Tara, düzenle, OCR yap, çevir ve profesyonel belge akışını tek yerden yönet.
+            </Text>
           </View>
-        </View>
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Son Kullanılanlar</Text>
-          <Text style={styles.sectionHint}>
-            {loading
-              ? 'Yükleniyor'
-              : `${filteredDocuments.length} belge${
-                  selectedDocumentIds.length > 0
-                    ? ` • ${selectedDocumentIds.length} seçili`
-                    : ''
-                }`}
-          </Text>
+          <Pressable
+            onPress={handleOpenDocuments}
+            style={({ pressed }) => [
+              styles.heroLibraryButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Ionicons name="folder-open-outline" size={18} color={colors.text} />
+            <Text style={styles.heroLibraryButtonText}>Belgelerim</Text>
+          </Pressable>
         </View>
 
         {loading ? (
           <View style={styles.loadingCard}>
             <ActivityIndicator size="small" color={colors.primary} />
-            <Text style={styles.loadingText}>Belgeler yükleniyor...</Text>
-          </View>
-        ) : recentDocuments.length > 0 ? (
-          <View style={styles.recentList}>
-            {recentDocuments.map((document) => (
-              <RecentDocumentCard
-                key={document.id}
-                document={document}
-                selected={selectedDocumentIds.includes(document.id)}
-                onToggleSelect={() => toggleDocumentSelection(document.id)}
-                onShare={() => void handleShareDocument(document)}
-                onView={() => handleOpenDocument(document.id)}
-                onToWord={handleToWord}
-              />
-            ))}
+            <Text style={styles.loadingText}>Ana ekran hazırlanıyor...</Text>
           </View>
         ) : (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>Henüz belge yok</Text>
-            <Text style={styles.emptyText}>
-              İlk taramayı başlatmak için üstteki Tara kısayolunu kullan.
+          <ContinueDocumentCard
+            document={latestDocument}
+            onPress={handleOpenLatest}
+            onOpenLibrary={handleOpenDocuments}
+          />
+        )}
+
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Hızlı giriş</Text>
+          <Text style={styles.sectionHint}>En çok kullanılan 4 işlem</Text>
+        </View>
+
+        <View style={styles.primaryActionGrid}>
+          {primaryActions.map((item) => (
+            <PrimaryActionCard
+              key={item.toolKey}
+              title={item.title}
+              subtitle={item.subtitle}
+              icon={item.icon}
+              onPress={() => handleToolPress(item.toolKey)}
+            />
+          ))}
+        </View>
+
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Son belgeler</Text>
+          <Text style={styles.sectionHint}>{documentCountLabel}</Text>
+        </View>
+
+        {loading ? (
+          <View style={styles.loadingInlineWrap}>
+            <ActivityIndicator size="small" color={colors.primary} />
+          </View>
+        ) : recentDocuments.length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.recentScrollContent}
+            style={styles.recentScroll}
+          >
+            {recentDocuments.map((document) => (
+              <RecentDocumentMiniCard
+                key={document.id}
+                document={document}
+                onPress={() =>
+                  navigation.navigate('DocumentDetail', {
+                    documentId: document.id,
+                  })
+                }
+              />
+            ))}
+          </ScrollView>
+        ) : (
+          <View style={styles.emptyRecentCard}>
+            <Text style={styles.emptyRecentTitle}>Henüz belge yok</Text>
+            <Text style={styles.emptyRecentText}>
+              İlk belgeyi oluşturduğunda burada hızlı erişim kartları görünecek.
             </Text>
+          </View>
+        )}
+
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Araçlar</Text>
+          <Pressable
+            onPress={() => navigation.navigate('ToolsTab')}
+            style={({ pressed }) => [pressed && styles.pressed]}
+          >
+            <Text style={styles.sectionLink}>Tüm araçlar</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.secondaryToolsGrid}>
+          {secondaryActions.map((item) => (
+            <SecondaryToolCard
+              key={item.toolKey}
+              title={item.title}
+              subtitle={item.subtitle}
+              icon={item.icon}
+              onPress={() => handleToolPress(item.toolKey)}
+            />
+          ))}
+        </View>
+
+        {!isPro ? (
+          <View style={styles.premiumCard}>
+            <View style={styles.premiumHeaderRow}>
+              <View style={styles.premiumIconWrap}>
+                <Ionicons name="diamond-outline" size={20} color={colors.primary} />
+              </View>
+
+              <View style={styles.premiumTextWrap}>
+                <Text style={styles.premiumTitle}>Free ve Premium farkı</Text>
+                <Text style={styles.premiumSubtitle}>
+                  Free sürümde tüm araçları kullanırsın. Kaydetme, export, paylaşma ve reklamsız kullanım premium ile açılır.
+                </Text>
+              </View>
+            </View>
 
             <Pressable
-              onPress={() => navigation.navigate('ScanEntry', { initialMode: 'camera' })}
+              onPress={() => navigation.navigate('Pricing')}
               style={({ pressed }) => [
-                styles.emptyPrimaryButton,
+                styles.premiumButton,
                 pressed && styles.pressed,
               ]}
             >
-              <Text style={styles.emptyPrimaryButtonText}>Taramayı Başlat</Text>
+              <Text style={styles.premiumButtonText}>Premium’u gör</Text>
             </Pressable>
+          </View>
+        ) : (
+          <View style={styles.proCard}>
+            <View style={styles.proBadgeRow}>
+              <Ionicons name="checkmark-circle" size={18} color={colors.primary} />
+              <Text style={styles.proTitle}>Premium aktif</Text>
+            </View>
+            <Text style={styles.proSubtitle}>
+              Reklamsız kullanım ve kaydetme / paylaşma özellikleri açık.
+            </Text>
           </View>
         )}
       </ScrollView>
@@ -641,181 +760,382 @@ const styles = StyleSheet.create({
     paddingBottom: 168,
     gap: Spacing.lg,
   },
-  searchCard: {
-    minHeight: 56,
-    borderRadius: Radius.xl,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    paddingHorizontal: Spacing.lg,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-    ...Shadows.sm,
-  },
-  searchInput: {
-    flex: 1,
-    minHeight: 56,
-    color: colors.text,
-    ...Typography.body,
-  },
-  quickSection: {
+  heroRow: {
     gap: Spacing.md,
   },
-  quickGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    rowGap: Spacing.md,
+  heroTextWrap: {
+    gap: 6,
   },
-  quickActionTile: {
-    width: '23%',
-    minHeight: 104,
-    borderRadius: Radius.xl,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.sm,
-    ...Shadows.sm,
-  },
-  quickActionIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.surfaceElevated,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  quickActionTitle: {
-    ...Typography.bodySmall,
-    color: colors.text,
-    fontWeight: '700',
-    textAlign: 'center',
-    lineHeight: 17,
-  },
-  sectionHeader: {
-    marginTop: Spacing.xs,
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    gap: Spacing.md,
-  },
-  sectionTitle: {
+  heroTitle: {
     ...Typography.titleLarge,
     color: colors.text,
   },
-  sectionHint: {
-    ...Typography.bodySmall,
-    color: colors.textTertiary,
-    textAlign: 'right',
+  heroSubtitle: {
+    ...Typography.body,
+    color: colors.textSecondary,
+    lineHeight: 22,
   },
-  recentList: {
-    gap: Spacing.md,
+  heroLibraryButton: {
+    alignSelf: 'flex-start',
+    minHeight: 42,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    ...Shadows.sm,
   },
-  recentCard: {
+  heroLibraryButtonText: {
+    color: colors.text,
+    fontWeight: '700',
+  },
+  continueCard: {
     borderRadius: Radius.xl,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.card,
     padding: Spacing.lg,
+    gap: Spacing.md,
     ...Shadows.sm,
   },
-  recentBodyRow: {
+  continueHeaderRow: {
     flexDirection: 'row',
-    alignItems: 'stretch',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
     gap: Spacing.md,
   },
-  thumbnailWrap: {
-    width: 86,
-    height: 112,
+  continueHeaderTextWrap: {
+    flex: 1,
+    gap: 6,
+  },
+  continueEyebrow: {
+    ...Typography.caption,
+    color: colors.primary,
+    fontWeight: '800',
+  },
+  continueTitle: {
+    ...Typography.titleLarge,
+    color: colors.text,
+  },
+  continueSubtitle: {
+    ...Typography.body,
+    color: colors.textSecondary,
+    lineHeight: 22,
+  },
+  continueStatusChip: {
+    borderRadius: 999,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 6,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  continueStatusChipText: {
+    ...Typography.caption,
+    color: colors.textSecondary,
+    fontWeight: '800',
+  },
+  continuePreviewRow: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    alignItems: 'stretch',
+  },
+  continuePreviewWrap: {
+    width: 92,
+    height: 122,
     borderRadius: Radius.lg,
     overflow: 'hidden',
     backgroundColor: colors.surfaceElevated,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  thumbnailImage: {
+  continuePreviewImage: {
     width: '100%',
     height: '100%',
   },
-  thumbnailPdfViewport: {
-    flex: 1,
-    overflow: 'hidden',
-    backgroundColor: '#FFFFFF',
-  },
-  thumbnailPdf: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  thumbnailFallback: {
+  continuePreviewFallback: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  recentMainColumn: {
+  continueSideColumn: {
     flex: 1,
     justifyContent: 'space-between',
     gap: Spacing.md,
   },
-  recentCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: Spacing.md,
-  },
-  recentCardTextWrap: {
-    flex: 1,
-    gap: 4,
-  },
-  recentCardTitle: {
+  continueSideTitle: {
     ...Typography.titleSmall,
     color: colors.text,
   },
-  recentCardMeta: {
+  continueSideText: {
     ...Typography.bodySmall,
     color: colors.textSecondary,
+    lineHeight: 20,
   },
-  checkboxButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingTop: 2,
-  },
-  recentActionRow: {
+  continueFooterRow: {
     flexDirection: 'row',
     gap: Spacing.sm,
-  },
-  inlineActionButton: {
-    flex: 1,
-    minHeight: 42,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceElevated,
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: Spacing.md,
   },
-  inlineActionButtonPrimary: {
-    flex: 1,
+  continuePrimaryButton: {
     minHeight: 42,
     borderRadius: Radius.lg,
     backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: Spacing.md,
+    flex: 1,
   },
-  inlineActionText: {
-    ...Typography.bodySmall,
-    color: colors.text,
-    fontWeight: '700',
-  },
-  inlineActionTextPrimary: {
-    ...Typography.bodySmall,
+  continuePrimaryButtonText: {
     color: colors.onPrimary,
     fontWeight: '800',
+    fontSize: 14,
+  },
+  continueSecondaryButton: {
+    minHeight: 42,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.md,
+  },
+  continueSecondaryButtonText: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  sectionHeader: {
+    marginTop: Spacing.xs,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.md,
+  },
+  sectionTitle: {
+    ...Typography.titleSmall,
+    color: colors.text,
+  },
+  sectionHint: {
+    ...Typography.bodySmall,
+    color: colors.textTertiary,
+  },
+  sectionLink: {
+    ...Typography.bodySmall,
+    color: colors.primary,
+    fontWeight: '800',
+  },
+  primaryActionGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: Spacing.md,
+  },
+  primaryActionCard: {
+    width: '48.5%',
+    minHeight: 112,
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    gap: Spacing.sm,
+    ...Shadows.sm,
+  },
+  primaryActionIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  primaryActionTextWrap: {
+    gap: 4,
+  },
+  primaryActionTitle: {
+    ...Typography.body,
+    color: colors.text,
+    fontWeight: '800',
+  },
+  primaryActionSubtitle: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 18,
+  },
+  recentScroll: {
+    marginHorizontal: -Layout.screenHorizontalPadding,
+  },
+  recentScrollContent: {
+    paddingHorizontal: Layout.screenHorizontalPadding,
+    gap: Spacing.md,
+  },
+  recentMiniCard: {
+    width: 150,
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    padding: Spacing.sm,
+    gap: Spacing.sm,
+    ...Shadows.sm,
+  },
+  recentMiniThumbWrap: {
+    width: '100%',
+    height: 102,
+    borderRadius: Radius.lg,
+    overflow: 'hidden',
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  recentMiniThumb: {
+    width: '100%',
+    height: '100%',
+  },
+  recentMiniThumbFallback: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recentMiniTitle: {
+    ...Typography.bodySmall,
+    color: colors.text,
+    fontWeight: '800',
+  },
+  recentMiniMeta: {
+    ...Typography.caption,
+    color: colors.textSecondary,
+  },
+  emptyRecentCard: {
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    padding: Spacing.lg,
+    gap: Spacing.xs,
+  },
+  emptyRecentTitle: {
+    ...Typography.titleSmall,
+    color: colors.text,
+  },
+  emptyRecentText: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
+  },
+  secondaryToolsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: Spacing.md,
+  },
+  secondaryToolCard: {
+    width: '31.5%',
+    minHeight: 118,
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.md,
+    alignItems: 'flex-start',
+    gap: 8,
+    ...Shadows.sm,
+  },
+  secondaryToolIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  secondaryToolTitle: {
+    ...Typography.bodySmall,
+    color: colors.text,
+    fontWeight: '800',
+  },
+  secondaryToolSubtitle: {
+    ...Typography.caption,
+    color: colors.textSecondary,
+    lineHeight: 16,
+  },
+  premiumCard: {
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: colors.card,
+    padding: Spacing.lg,
+    gap: Spacing.md,
+    ...Shadows.sm,
+  },
+  premiumHeaderRow: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    alignItems: 'flex-start',
+  },
+  premiumIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  premiumTextWrap: {
+    flex: 1,
+    gap: 6,
+  },
+  premiumTitle: {
+    ...Typography.titleSmall,
+    color: colors.text,
+  },
+  premiumSubtitle: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
+  },
+  premiumButton: {
+    minHeight: 46,
+    borderRadius: Radius.lg,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.lg,
+  },
+  premiumButtonText: {
+    color: colors.onPrimary,
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  proCard: {
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    padding: Spacing.lg,
+    gap: 8,
+    ...Shadows.sm,
+  },
+  proBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  proTitle: {
+    ...Typography.titleSmall,
+    color: colors.text,
+  },
+  proSubtitle: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
   },
   loadingCard: {
     borderRadius: Radius.xl,
@@ -831,36 +1151,10 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: colors.textSecondary,
   },
-  emptyCard: {
-    borderRadius: Radius.xl,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    padding: Spacing.xl,
-    gap: Spacing.sm,
-    ...Shadows.sm,
-  },
-  emptyTitle: {
-    ...Typography.titleLarge,
-    color: colors.text,
-  },
-  emptyText: {
-    ...Typography.body,
-    color: colors.textSecondary,
-  },
-  emptyPrimaryButton: {
-    marginTop: Spacing.sm,
-    minHeight: 50,
-    borderRadius: Radius.lg,
-    backgroundColor: colors.primary,
+  loadingInlineWrap: {
+    minHeight: 70,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: Spacing.lg,
-  },
-  emptyPrimaryButtonText: {
-    color: colors.onPrimary,
-    fontWeight: '800',
-    fontSize: 15,
   },
   cardPressed: {
     opacity: 0.94,

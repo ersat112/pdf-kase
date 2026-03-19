@@ -76,12 +76,14 @@ const tools: ToolDefinition[] = [
     key: 'scan-translate',
     section: 'scan',
     title: 'Çevir',
-    shortDescription: 'Görsel metni yakalayıp çeviri hattına hazırlar.',
+    shortDescription: 'OCR metnini belge detayından Türkçeye çevirme akışı.',
     longDescription:
-      'Çeviri modu OCR ve çeviri pipeline’ını tek akışta birleştirecek. Şu an launcher ve ürün konumu hazır.',
-    availability: 'planned',
-    badges: ['Çeviri', 'OCR', 'Fotoğraf'],
-    primaryActionLabel: 'İçeriği görüntüle',
+      'Çeviri akışı belge detay ekranında OCR sonrası çalışır. Yabancı dildeki metin Türkçeye çevrilir ve kullanıcı önizlemede sonucu görebilir.',
+    availability: 'ready',
+    badges: ['Hazır', 'Çeviri', 'OCR'],
+    primaryActionLabel: 'Belgelerimi aç',
+    routeTarget: 'Documents',
+    homeVisible: true,
     scanLauncherVisible: true,
   },
   {
@@ -197,12 +199,14 @@ const tools: ToolDefinition[] = [
     key: 'convert-excel',
     section: 'convert',
     title: 'Excel’e',
-    shortDescription: 'Tablo içeriklerini Excel çıktısına hazırlama.',
+    shortDescription: 'Belge detayından Excel uyumlu çıktı üretme.',
     longDescription:
-      'Excel dönüşümü tablo algılama ve XLSX export katmanı bağlandığında aktif olacak.',
-    availability: 'planned',
-    badges: ['Excel', 'Tablo', 'Dönüştürme'],
-    primaryActionLabel: 'İçeriği görüntüle',
+      'Excel çıktısı belge detay ekranında OCR metni üzerinden hazırlanır. Belge özeti ve OCR içeriği Excel uyumlu dosya olarak dışa aktarılır.',
+    availability: 'ready',
+    badges: ['Hazır', 'Excel', 'OCR'],
+    primaryActionLabel: 'Belgelerimi aç',
+    routeTarget: 'Documents',
+    homeVisible: true,
     scanLauncherVisible: true,
   },
   {
@@ -271,12 +275,28 @@ const tools: ToolDefinition[] = [
 
 export const homeQuickActionKeys = [
   'scan-camera',
-  'import-images',
   'import-files',
-  'scan-id-card',
+  'import-images',
+  'edit-stamp',
   'scan-ocr-text',
-  'scan-id-photo',
+  'scan-translate',
   'convert-word',
+  'convert-excel',
+] as const;
+
+export const homePrimaryActionKeys = [
+  'scan-camera',
+  'import-files',
+  'import-images',
+  'edit-stamp',
+] as const;
+
+export const homeSecondaryToolKeys = [
+  'scan-ocr-text',
+  'scan-translate',
+  'edit-smart-erase',
+  'convert-word',
+  'convert-excel',
   'utility-tools-hub',
 ] as const;
 
