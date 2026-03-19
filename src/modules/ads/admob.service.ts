@@ -12,6 +12,12 @@ import {
   isAdMobRuntimeEnabled,
 } from './admob.config';
 
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 class AdMobService {
   private initialized = false;
   private initializingPromise: Promise<void> | null = null;
@@ -91,6 +97,27 @@ class AdMobService {
       });
   }
 
+  async waitUntilInterstitialReady(timeoutMs = 10_000): Promise<boolean> {
+    if (!isAdMobInterstitialEnabled()) {
+      return false;
+    }
+
+    await this.initialize();
+    this.preloadInterstitial();
+
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+      if (this.isInterstitialReady()) {
+        return true;
+      }
+
+      await sleep(250);
+    }
+
+    return this.isInterstitialReady();
+  }
+
   async showInterstitial(): Promise<boolean> {
     if (!isAdMobInterstitialEnabled()) {
       return false;
@@ -114,6 +141,19 @@ class AdMobService {
       this.rebuildInterstitial();
       return false;
     }
+  }
+
+  async showInterstitialWhenReady(options?: {
+    timeoutMs?: number;
+  }): Promise<boolean> {
+    const isReady = await this.waitUntilInterstitialReady(options?.timeoutMs ?? 10_000);
+
+    if (!isReady) {
+      this.preloadInterstitial(true);
+      return false;
+    }
+
+    return this.showInterstitial();
   }
 
   private buildInterstitial(): void {

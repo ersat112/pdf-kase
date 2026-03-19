@@ -251,6 +251,23 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
     }
   }, []);
 
+  const promptPremiumForSave = useCallback(
+    (featureLabel: string) => {
+      Alert.alert(
+        'Premium gerekli',
+        `${featureLabel} özelliği kaydetme / dışa aktarma aşamasında premium gerektirir. Free sürümde tüm araçları deneyebilir, premium ile dosyanı kaydedebilirsin.`,
+        [
+          { text: 'Şimdi değil', style: 'cancel' },
+          {
+            text: 'Premiuma geç',
+            onPress: () => navigation.navigate('Pricing'),
+          },
+        ],
+      );
+    },
+    [navigation],
+  );
+
   const loadDocument = useCallback(async () => {
     try {
       if (mountedRef.current) {
@@ -367,6 +384,11 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
       return;
     }
 
+    if (!isPro) {
+      promptPremiumForSave('PDF kaydetme');
+      return;
+    }
+
     try {
       setBusyState(true, 'PDF hazırlanıyor...');
 
@@ -382,11 +404,16 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
     } finally {
       resetBusyState();
     }
-  }, [document?.pages.length, documentId, loadDocument, resetBusyState, runAfterTask, setBusyState]);
+  }, [document?.pages.length, documentId, isPro, loadDocument, promptPremiumForSave, resetBusyState, runAfterTask, setBusyState]);
 
   const handleSharePdf = useCallback(async () => {
     if (!document?.pdf_path) {
       Alert.alert('PDF yok', 'Önce PDF oluştur.');
+      return;
+    }
+
+    if (!isPro) {
+      promptPremiumForSave('PDF paylaşma');
       return;
     }
 
@@ -409,7 +436,7 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
     } finally {
       resetBusyState();
     }
-  }, [document, resetBusyState, setBusyState]);
+  }, [document, isPro, promptPremiumForSave, resetBusyState, setBusyState]);
 
   const handleExportWord = useCallback(async () => {
     if (busyRef.current) {
@@ -418,6 +445,11 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
 
     if (!document?.pages.length) {
       Alert.alert('Word oluşturulamıyor', 'Bu belgede dönüştürülecek sayfa yok.');
+      return;
+    }
+
+    if (!isPro) {
+      promptPremiumForSave("Word'e çevirme");
       return;
     }
 
@@ -446,7 +478,7 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
     } finally {
       resetBusyState();
     }
-  }, [document?.pages.length, document?.title, documentId, loadDocument, resetBusyState, runAfterTask, setBusyState]);
+  }, [document?.pages.length, document?.title, documentId, isPro, loadDocument, promptPremiumForSave, resetBusyState, runAfterTask, setBusyState]);
 
   const handleExportExcel = useCallback(async () => {
     if (busyRef.current) {
@@ -455,6 +487,11 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
 
     if (!document?.pages.length) {
       Alert.alert('Excel oluşturulamıyor', 'Bu belgede dönüştürülecek sayfa yok.');
+      return;
+    }
+
+    if (!isPro) {
+      promptPremiumForSave("Excel'e çevirme");
       return;
     }
 
@@ -483,7 +520,7 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
     } finally {
       resetBusyState();
     }
-  }, [document?.pages.length, document?.title, documentId, loadDocument, resetBusyState, runAfterTask, setBusyState]);
+  }, [document?.pages.length, document?.title, documentId, isPro, loadDocument, promptPremiumForSave, resetBusyState, runAfterTask, setBusyState]);
 
   const handleRetakePage = useCallback(async () => {
     if (busyRef.current || !currentPage) {
@@ -685,7 +722,7 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
         <View style={styles.noticeCard}>
           <Text style={styles.noticeTitle}>Free sürüm</Text>
           <Text style={styles.noticeText}>
-            Free kullanımda kaşe eklenmiş PDF çıktısına filigran eklenir.
+            Tüm araçları kullanabilirsin. Kaydetme / export / paylaşma aşamasında premium gerekir.
           </Text>
         </View>
       ) : null}
@@ -768,13 +805,36 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
       ) : null}
 
       <View style={styles.outputCard}>
-        <Text style={styles.outputTitle}>Çıktılar</Text>
+        <Text style={styles.outputTitle}>Kaydet / Çıktılar</Text>
 
         <View style={styles.outputActions}>
-          <PrimaryButton title={document.pdf_path ? 'PDF güncelle' : 'PDF oluştur'} onPress={() => void handleExportPdf()} disabled={busy} />
-          <SecondaryButton title="PDF paylaş" onPress={() => void handleSharePdf()} disabled={busy || !document.pdf_path} />
-          <SecondaryButton title="Word'e çevir" onPress={() => void handleExportWord()} disabled={busy} />
-          <SecondaryButton title="Excel'e çevir" onPress={() => void handleExportExcel()} disabled={busy} />
+          <PrimaryButton
+            title={isPro ? (document.pdf_path ? 'PDF güncelle' : 'PDF oluştur') : 'PDF kaydet (Premium)'}
+            onPress={() => void handleExportPdf()}
+            disabled={busy}
+          />
+          <SecondaryButton
+            title={isPro ? 'PDF paylaş' : 'PDF paylaş (Premium)'}
+            onPress={() => void handleSharePdf()}
+            disabled={busy || (!document.pdf_path && isPro)}
+          />
+          <SecondaryButton
+            title={isPro ? "Word'e çevir" : "Word'e çevir (Premium)"}
+            onPress={() => void handleExportWord()}
+            disabled={busy}
+          />
+          <SecondaryButton
+            title={isPro ? "Excel'e çevir" : "Excel'e çevir (Premium)"}
+            onPress={() => void handleExportExcel()}
+            disabled={busy}
+          />
+          {!isPro ? (
+            <SecondaryButton
+              title="Premium farklarını gör"
+              onPress={() => navigation.navigate('Pricing')}
+              disabled={busy}
+            />
+          ) : null}
           <SecondaryButton title="Kaşe editörünü aç" onPress={() => navigation.navigate('PdfEditor', { documentId })} disabled={busy} />
         </View>
       </View>
@@ -842,7 +902,7 @@ const styles = StyleSheet.create({
   },
   noticeCard: {
     backgroundColor: colors.card,
-    borderColor: colors.border,
+    borderColor: colors.primary,
     borderWidth: 1,
     borderRadius: Radius.xl,
     padding: Spacing.lg,

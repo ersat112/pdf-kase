@@ -15,6 +15,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { initializeDatabase } from './src/db/sqlite';
+import { useAdGate } from './src/hooks/useAdGate';
 import { ensureAppDirectories } from './src/modules/storage/file.service';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import {
@@ -40,6 +41,10 @@ export default function App() {
     error: null,
   });
   const [bootAttempt, setBootAttempt] = useState(0);
+
+  useAdGate({
+    enableLifecycleAds: true,
+  });
 
   const retryBootstrap = useCallback(() => {
     setBootState({
