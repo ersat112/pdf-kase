@@ -1,7 +1,7 @@
 // src/screens/documents/DocumentsScreen.tsx
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -15,6 +15,9 @@ import {
 import { Screen } from '../../components/common/Screen';
 import {
   getRecentDocuments,
+  renameDocumentTitle,
+  setDocumentFavorite,
+  setDocumentsFavorite,
   type DocumentSummary,
 } from '../../modules/documents/document.service';
 import {
@@ -25,7 +28,11 @@ import {
   colors,
 } from '../../theme';
 
-type FilterKey = 'all' | 'draft' | 'ready' | 'ocr' | 'pdf';
+type FilterKey = 'all' | 'draft' | 'ready' | 'ocr' | 'pdf' | 'favorite';
+
+function isFavorite(item: DocumentSummary) {
+  return item.is_favorite === 1;
+}
 
 function getStatusLabel(item: DocumentSummary) {
   if (item.pdf_path && item.status === 'ready') {
@@ -89,6 +96,8 @@ function matchesFilter(item: DocumentSummary, filter: FilterKey) {
       return item.ocr_status === 'ready';
     case 'pdf':
       return Boolean(item.pdf_path);
+    case 'favorite':
+      return isFavorite(item);
     case 'all':
     default:
       return true;
@@ -224,69 +233,168 @@ function StatusBadge({ item }: { item: DocumentSummary }) {
 
 function DocumentCard({
   item,
-  onPress,
+  selectionMode,
+  selected,
+  renameOpen,
+  renameValue,
+  onChangeRenameValue,
+  onSubmitRename,
+  onCancelRename,
+  onOpen,
+  onLongPress,
+  onToggleFavorite,
 }: {
   item: DocumentSummary;
-  onPress: () => void;
+  selectionMode: boolean;
+  selected: boolean;
+  renameOpen: boolean;
+  renameValue: string;
+  onChangeRenameValue: (value: string) => void;
+  onSubmitRename: () => void;
+  onCancelRename: () => void;
+  onOpen: () => void;
+  onLongPress: () => void;
+  onToggleFavorite: () => void;
 }) {
+  const favorite = isFavorite(item);
+
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [styles.card, pressed && styles.pressed]}
-    >
-      <View style={styles.thumbnailFrame}>
-        {item.thumbnail_path ? (
-          <Image source={{ uri: item.thumbnail_path }} style={styles.thumbnail} />
-        ) : (
-          <View style={styles.thumbnailPlaceholder}>
+    <View style={styles.card}>
+      <Pressable
+        onPress={onOpen}
+        onLongPress={onLongPress}
+        delayLongPress={220}
+        style={({ pressed }) => [
+          styles.cardMainPressable,
+          pressed && styles.pressed,
+        ]}
+      >
+        <View style={styles.thumbnailFrame}>
+          {item.thumbnail_path ? (
+            <Image source={{ uri: item.thumbnail_path }} style={styles.thumbnail} />
+          ) : (
+            <View style={styles.thumbnailPlaceholder}>
+              <Ionicons
+                name="document-text-outline"
+                size={22}
+                color={colors.textTertiary}
+              />
+              <Text style={styles.thumbnailPlaceholderText}>Önizleme yok</Text>
+            </View>
+          )}
+
+          {selected ? (
+            <View style={styles.selectionBadge}>
+              <Ionicons name="checkmark-circle" size={18} color={colors.primary} />
+            </View>
+          ) : null}
+        </View>
+
+        <View style={styles.cardContent}>
+          <View style={styles.cardTopRow}>
+            <View style={styles.cardTitleWrap}>
+              <Text numberOfLines={2} style={styles.cardTitle}>
+                {item.title}
+              </Text>
+
+              <View style={styles.cardMetaRow}>
+                <Text style={styles.cardMeta}>Sayfa: {item.page_count}</Text>
+                <Text style={styles.cardMetaDot}>•</Text>
+                <Text style={styles.cardMeta}>{formatDate(item.updated_at)}</Text>
+              </View>
+            </View>
+
             <Ionicons
-              name="document-text-outline"
-              size={22}
-              color={colors.textTertiary}
+              name={selectionMode ? 'checkmark-done-outline' : 'chevron-forward'}
+              size={20}
+              color={selected ? colors.primary : colors.textTertiary}
             />
-            <Text style={styles.thumbnailPlaceholderText}>Önizleme yok</Text>
           </View>
-        )}
-      </View>
 
-      <View style={styles.cardContent}>
-        <View style={styles.cardTopRow}>
-          <View style={styles.cardTitleWrap}>
-            <Text numberOfLines={2} style={styles.cardTitle}>
-              {item.title}
+          <View style={styles.cardBottomRow}>
+            <StatusBadge item={item} />
+
+            {favorite ? (
+              <View style={styles.favoriteMiniBadge}>
+                <Ionicons name="star" size={12} color={colors.primary} />
+                <Text style={styles.favoriteMiniBadgeText}>Favori</Text>
+              </View>
+            ) : null}
+
+            {item.word_path ? (
+              <View style={styles.inlineMiniBadge}>
+                <Text style={styles.inlineMiniBadgeText}>WORD</Text>
+              </View>
+            ) : null}
+
+            {item.pdf_path ? (
+              <View style={styles.inlineMiniBadge}>
+                <Text style={styles.inlineMiniBadgeText}>PDF</Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+      </Pressable>
+
+      {!selectionMode ? (
+        <View style={styles.cardActionRow}>
+          <Pressable
+            onPress={onToggleFavorite}
+            style={({ pressed }) => [
+              styles.inlineActionButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Ionicons
+              name={favorite ? 'star' : 'star-outline'}
+              size={16}
+              color={favorite ? colors.primary : colors.textSecondary}
+            />
+            <Text style={styles.inlineActionButtonText}>
+              {favorite ? 'Favoriden çıkar' : 'Favori yap'}
             </Text>
+          </Pressable>
+        </View>
+      ) : null}
 
-            <View style={styles.cardMetaRow}>
-              <Text style={styles.cardMeta}>Sayfa: {item.page_count}</Text>
-              <Text style={styles.cardMetaDot}>•</Text>
-              <Text style={styles.cardMeta}>{formatDate(item.updated_at)}</Text>
-            </View>
-          </View>
+      {renameOpen ? (
+        <View style={styles.renameCard}>
+          <Text style={styles.renameTitle}>Belge adını düzenle</Text>
 
-          <Ionicons
-            name="chevron-forward"
-            size={20}
-            color={colors.textTertiary}
+          <TextInput
+            value={renameValue}
+            onChangeText={onChangeRenameValue}
+            placeholder="Belge adı"
+            placeholderTextColor={colors.textTertiary}
+            style={styles.renameInput}
+            autoFocus
+            maxLength={120}
           />
+
+          <View style={styles.renameActions}>
+            <Pressable
+              onPress={onCancelRename}
+              style={({ pressed }) => [
+                styles.renameSecondaryButton,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={styles.renameSecondaryButtonText}>Vazgeç</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={onSubmitRename}
+              style={({ pressed }) => [
+                styles.renamePrimaryButton,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={styles.renamePrimaryButtonText}>Kaydet</Text>
+            </Pressable>
+          </View>
         </View>
-
-        <View style={styles.cardBottomRow}>
-          <StatusBadge item={item} />
-
-          {item.word_path ? (
-            <View style={styles.inlineMiniBadge}>
-              <Text style={styles.inlineMiniBadgeText}>WORD</Text>
-            </View>
-          ) : null}
-
-          {item.pdf_path ? (
-            <View style={styles.inlineMiniBadge}>
-              <Text style={styles.inlineMiniBadgeText}>PDF</Text>
-            </View>
-          ) : null}
-        </View>
-      </View>
-    </Pressable>
+      ) : null}
+    </View>
   );
 }
 
@@ -295,8 +403,12 @@ export function DocumentsScreen() {
 
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<FilterKey>('all');
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [renameTargetId, setRenameTargetId] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState('');
 
   const loadDocuments = useCallback(async () => {
     try {
@@ -317,29 +429,56 @@ export function DocumentsScreen() {
     }, [loadDocuments]),
   );
 
+  useEffect(() => {
+    setSelectedIds((current) =>
+      current.filter((id) => documents.some((item) => item.id === id)),
+    );
+
+    if (
+      renameTargetId !== null &&
+      !documents.some((item) => item.id === renameTargetId)
+    ) {
+      setRenameTargetId(null);
+      setRenameValue('');
+    }
+  }, [documents, renameTargetId]);
+
+  const selectionMode = selectedIds.length > 0;
+
   const filteredDocuments = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase('tr-TR');
 
-    return documents.filter((item) => {
-      if (!matchesFilter(item, filter)) {
-        return false;
-      }
+    return [...documents]
+      .filter((item) => {
+        if (!matchesFilter(item, filter)) {
+          return false;
+        }
 
-      if (!normalizedQuery) {
-        return true;
-      }
+        if (!normalizedQuery) {
+          return true;
+        }
 
-      const haystack = [
-        item.title,
-        item.status,
-        item.ocr_status,
-        getStatusLabel(item),
-      ]
-        .join(' ')
-        .toLocaleLowerCase('tr-TR');
+        const haystack = [
+          item.title,
+          item.status,
+          item.ocr_status,
+          getStatusLabel(item),
+          isFavorite(item) ? 'favori' : '',
+        ]
+          .join(' ')
+          .toLocaleLowerCase('tr-TR');
 
-      return haystack.includes(normalizedQuery);
-    });
+        return haystack.includes(normalizedQuery);
+      })
+      .sort((left, right) => {
+        const favoriteDelta = Number(isFavorite(right)) - Number(isFavorite(left));
+
+        if (favoriteDelta !== 0) {
+          return favoriteDelta;
+        }
+
+        return new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
+      });
   }, [documents, filter, query]);
 
   const totalPages = useMemo(() => {
@@ -357,6 +496,120 @@ export function DocumentsScreen() {
   const pdfCount = useMemo(() => {
     return documents.filter((item) => Boolean(item.pdf_path)).length;
   }, [documents]);
+
+  const favoriteCount = useMemo(() => {
+    return documents.filter((item) => isFavorite(item)).length;
+  }, [documents]);
+
+  const selectedDocuments = useMemo(() => {
+    return documents.filter((item) => selectedIds.includes(item.id));
+  }, [documents, selectedIds]);
+
+  const singleSelectedDocument = selectedDocuments.length === 1 ? selectedDocuments[0] : null;
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds([]);
+    setRenameTargetId(null);
+    setRenameValue('');
+  }, []);
+
+  const toggleSelectedId = useCallback((documentId: number) => {
+    setSelectedIds((current) =>
+      current.includes(documentId)
+        ? current.filter((value) => value !== documentId)
+        : [...current, documentId],
+    );
+  }, []);
+
+  const handleCardPress = useCallback(
+    (item: DocumentSummary) => {
+      if (selectionMode) {
+        toggleSelectedId(item.id);
+        return;
+      }
+
+      navigation.navigate('DocumentDetail', {
+        documentId: item.id,
+      });
+    },
+    [navigation, selectionMode, toggleSelectedId],
+  );
+
+  const handleCardLongPress = useCallback(
+    (item: DocumentSummary) => {
+      setRenameTargetId(null);
+      setRenameValue('');
+      toggleSelectedId(item.id);
+    },
+    [toggleSelectedId],
+  );
+
+  const handleToggleFavorite = useCallback(
+    async (item: DocumentSummary) => {
+      try {
+        setBusy(true);
+        await setDocumentFavorite(item.id, !isFavorite(item));
+        await loadDocuments();
+      } catch (error) {
+        console.warn('[Documents] Toggle favorite failed:', error);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [loadDocuments],
+  );
+
+  const handleBulkFavorite = useCallback(
+    async (nextFavorite: boolean) => {
+      if (!selectedIds.length) {
+        return;
+      }
+
+      try {
+        setBusy(true);
+        await setDocumentsFavorite(selectedIds, nextFavorite);
+        await loadDocuments();
+        clearSelection();
+      } catch (error) {
+        console.warn('[Documents] Bulk favorite failed:', error);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [clearSelection, loadDocuments, selectedIds],
+  );
+
+  const handleOpenRename = useCallback(() => {
+    if (!singleSelectedDocument) {
+      return;
+    }
+
+    setRenameTargetId(singleSelectedDocument.id);
+    setRenameValue(singleSelectedDocument.title);
+  }, [singleSelectedDocument]);
+
+  const handleCancelRename = useCallback(() => {
+    setRenameTargetId(null);
+    setRenameValue('');
+  }, []);
+
+  const handleSubmitRename = useCallback(async () => {
+    if (!renameTargetId) {
+      return;
+    }
+
+    try {
+      setBusy(true);
+      await renameDocumentTitle(renameTargetId, renameValue);
+      await loadDocuments();
+      setRenameTargetId(null);
+      setRenameValue('');
+    } catch (error) {
+      console.warn('[Documents] Rename failed:', error);
+    } finally {
+      setBusy(false);
+    }
+  }, [loadDocuments, renameTargetId, renameValue]);
 
   return (
     <Screen
@@ -425,6 +678,11 @@ export function DocumentsScreen() {
             selected={filter === 'pdf'}
             onPress={() => setFilter('pdf')}
           />
+          <FilterChip
+            label="Favori"
+            selected={filter === 'favorite'}
+            onPress={() => setFilter('favorite')}
+          />
         </View>
       </View>
 
@@ -433,7 +691,73 @@ export function DocumentsScreen() {
         <StatCard label="Toplam sayfa" value={totalPages} icon="layers-outline" />
         <StatCard label="Taslak" value={draftCount} icon="create-outline" />
         <StatCard label="PDF hazır" value={pdfCount || readyCount} icon="document-outline" />
+        <StatCard label="Favori" value={favoriteCount} icon="star-outline" />
       </View>
+
+      {selectionMode ? (
+        <View style={styles.selectionToolbar}>
+          <View style={styles.selectionToolbarHeader}>
+            <Text style={styles.selectionToolbarTitle}>Seçim modu</Text>
+            <Text style={styles.selectionToolbarHint}>{selectedIds.length} belge seçildi</Text>
+          </View>
+
+          <View style={styles.selectionToolbarActions}>
+            <Pressable
+              onPress={() => void handleBulkFavorite(true)}
+              disabled={busy}
+              style={({ pressed }) => [
+                styles.selectionActionButton,
+                pressed && !busy && styles.pressed,
+                busy && styles.selectionActionButtonDisabled,
+              ]}
+            >
+              <Ionicons name="star" size={16} color={colors.primary} />
+              <Text style={styles.selectionActionButtonText}>Favori yap</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => void handleBulkFavorite(false)}
+              disabled={busy}
+              style={({ pressed }) => [
+                styles.selectionActionButton,
+                pressed && !busy && styles.pressed,
+                busy && styles.selectionActionButtonDisabled,
+              ]}
+            >
+              <Ionicons name="star-outline" size={16} color={colors.textSecondary} />
+              <Text style={styles.selectionActionButtonText}>Favoriden çıkar</Text>
+            </Pressable>
+
+            {singleSelectedDocument ? (
+              <Pressable
+                onPress={handleOpenRename}
+                disabled={busy}
+                style={({ pressed }) => [
+                  styles.selectionActionButton,
+                  pressed && !busy && styles.pressed,
+                  busy && styles.selectionActionButtonDisabled,
+                ]}
+              >
+                <Ionicons name="pencil-outline" size={16} color={colors.textSecondary} />
+                <Text style={styles.selectionActionButtonText}>Yeniden adlandır</Text>
+              </Pressable>
+            ) : null}
+
+            <Pressable
+              onPress={clearSelection}
+              disabled={busy}
+              style={({ pressed }) => [
+                styles.selectionActionButton,
+                pressed && !busy && styles.pressed,
+                busy && styles.selectionActionButtonDisabled,
+              ]}
+            >
+              <Ionicons name="close-outline" size={16} color={colors.textSecondary} />
+              <Text style={styles.selectionActionButtonText}>Vazgeç</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
 
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Belge listesi</Text>
@@ -441,6 +765,13 @@ export function DocumentsScreen() {
           {loading ? 'Yükleniyor' : `${filteredDocuments.length} kayıt`}
         </Text>
       </View>
+
+      {busy ? (
+        <View style={styles.busyRow}>
+          <ActivityIndicator size="small" color={colors.primary} />
+          <Text style={styles.busyText}>İşlem uygulanıyor...</Text>
+        </View>
+      ) : null}
 
       {loading ? (
         <View style={styles.loadingContainer}>
@@ -460,11 +791,16 @@ export function DocumentsScreen() {
             <DocumentCard
               key={item.id}
               item={item}
-              onPress={() =>
-                navigation.navigate('DocumentDetail', {
-                  documentId: item.id,
-                })
-              }
+              selectionMode={selectionMode}
+              selected={selectedIds.includes(item.id)}
+              renameOpen={renameTargetId === item.id}
+              renameValue={renameTargetId === item.id ? renameValue : ''}
+              onChangeRenameValue={setRenameValue}
+              onSubmitRename={() => void handleSubmitRename()}
+              onCancelRename={handleCancelRename}
+              onOpen={() => handleCardPress(item)}
+              onLongPress={() => handleCardLongPress(item)}
+              onToggleFavorite={() => void handleToggleFavorite(item)}
             />
           ))}
         </View>
@@ -598,6 +934,49 @@ const styles = StyleSheet.create({
     ...Typography.titleSmall,
     color: colors.text,
   },
+  selectionToolbar: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: Radius.xl,
+    padding: Spacing.lg,
+    marginBottom: Spacing.lg,
+    gap: Spacing.md,
+    ...Shadows.sm,
+  },
+  selectionToolbarHeader: {
+    gap: 4,
+  },
+  selectionToolbarTitle: {
+    ...Typography.titleSmall,
+    color: colors.text,
+  },
+  selectionToolbarHint: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+  },
+  selectionToolbarActions: {
+    gap: Spacing.sm,
+  },
+  selectionActionButton: {
+    minHeight: 42,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+    paddingHorizontal: Spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  selectionActionButtonDisabled: {
+    opacity: 0.6,
+  },
+  selectionActionButtonText: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 14,
+  },
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -612,6 +991,17 @@ const styles = StyleSheet.create({
   sectionHint: {
     ...Typography.bodySmall,
     color: colors.textTertiary,
+  },
+  busyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  busyText: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    fontWeight: '700',
   },
   loadingContainer: {
     alignItems: 'center',
@@ -684,10 +1074,13 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderWidth: 1,
     borderRadius: Radius.xl,
+    overflow: 'hidden',
+    ...Shadows.sm,
+  },
+  cardMainPressable: {
     padding: Spacing.md,
     flexDirection: 'row',
     gap: Spacing.md,
-    ...Shadows.sm,
   },
   thumbnailFrame: {
     width: 78,
@@ -699,6 +1092,13 @@ const styles = StyleSheet.create({
   thumbnail: {
     width: '100%',
     height: '100%',
+  },
+  selectionBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    backgroundColor: colors.card,
+    borderRadius: 999,
   },
   thumbnailPlaceholder: {
     flex: 1,
@@ -801,6 +1201,99 @@ const styles = StyleSheet.create({
     color: colors.textTertiary,
     fontSize: 11,
     fontWeight: '800',
+  },
+  favoriteMiniBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  favoriteMiniBadgeText: {
+    color: colors.primary,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  cardActionRow: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+  },
+  inlineActionButton: {
+    minHeight: 36,
+    alignSelf: 'flex-start',
+    borderRadius: Radius.lg,
+    paddingHorizontal: Spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  inlineActionButtonText: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  renameCard: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    padding: Spacing.md,
+    gap: Spacing.sm,
+    backgroundColor: colors.surfaceElevated,
+  },
+  renameTitle: {
+    ...Typography.bodySmall,
+    color: colors.text,
+    fontWeight: '800',
+  },
+  renameInput: {
+    minHeight: 46,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    color: colors.text,
+    paddingHorizontal: Spacing.md,
+    ...Typography.body,
+  },
+  renameActions: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+  },
+  renamePrimaryButton: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: Radius.lg,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  renamePrimaryButtonText: {
+    color: colors.onPrimary,
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  renameSecondaryButton: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  renameSecondaryButtonText: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 14,
   },
   pressed: {
     opacity: 0.92,

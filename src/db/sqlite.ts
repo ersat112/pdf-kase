@@ -1,7 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 
 const DB_NAME = 'pdf_kase.db';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -166,6 +166,22 @@ async function migrateToVersion5(db: SQLite.SQLiteDatabase) {
   `);
 }
 
+async function migrateToVersion6(db: SQLite.SQLiteDatabase) {
+  await ensureColumn(db, 'documents', 'is_favorite', 'INTEGER NOT NULL DEFAULT 0');
+
+  await db.execAsync(`
+    UPDATE documents
+    SET is_favorite = 0
+    WHERE is_favorite IS NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_documents_favorite_updated_at
+      ON documents(is_favorite DESC, updated_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_documents_title_nocase
+      ON documents(title COLLATE NOCASE);
+  `);
+}
+
 async function runMigrations(db: SQLite.SQLiteDatabase) {
   await applyBasePragmas(db);
 
@@ -192,6 +208,10 @@ async function runMigrations(db: SQLite.SQLiteDatabase) {
 
   if (currentVersion < 5) {
     await migrateToVersion5(db);
+  }
+
+  if (currentVersion < 6) {
+    await migrateToVersion6(db);
   }
 
   if (currentVersion !== DB_VERSION) {

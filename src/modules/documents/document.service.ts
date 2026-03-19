@@ -4,10 +4,6 @@ import { Image } from 'react-native';
 
 import { getDb } from '../../db/sqlite';
 import { getAssetById } from '../assets/asset.service';
-import { resolveBillingCapabilities } from '../billing/billing-capabilities';
-import {
-  getStoredBillingState,
-} from '../billing/billing.service';
 import {
   buildExcelDocumentBytes,
   type BuildExcelDocumentInput,
@@ -56,6 +52,7 @@ export type DocumentSummary = {
   thumbnail_path: string | null;
   ocr_status: DocumentOcrStatus;
   word_path: string | null;
+  is_favorite: number;
   page_count: number;
   created_at: string;
   updated_at: string;
@@ -89,6 +86,7 @@ export type DocumentDetail = {
   ocr_error: string | null;
   word_path: string | null;
   word_updated_at: string | null;
+  is_favorite: number;
   created_at: string;
   updated_at: string;
   pages: DocumentPage[];
@@ -195,6 +193,20 @@ function buildDocumentTitleFromFileName(fileName?: string | null) {
   const title = trimmed.replace(/\.[^.]+$/, '').trim();
 
   return title.length > 0 ? title : buildDocumentTitle();
+}
+
+function normalizeDocumentTitleInput(value: string) {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+
+  if (!normalized) {
+    throw new Error('Belge adı boş bırakılamaz.');
+  }
+
+  if (normalized.length > 120) {
+    return normalized.slice(0, 120).trim();
+  }
+
+  return normalized;
 }
 
 function normalizeImportUri(uri: string) {
@@ -1080,6 +1092,7 @@ export async function getRecentDocuments(limit = 20): Promise<DocumentSummary[]>
         d.thumbnail_path,
         COALESCE(d.ocr_status, 'idle') AS ocr_status,
         d.word_path,
+        COALESCE(d.is_favorite, 0) AS is_favorite,
         d.created_at,
         d.updated_at,
         COALESCE((
@@ -1143,6 +1156,7 @@ export async function getDocumentDetail(
         ocr_error,
         word_path,
         word_updated_at,
+        COALESCE(is_favorite, 0) AS is_favorite,
         created_at,
         updated_at
       FROM documents
@@ -1175,6 +1189,99 @@ export async function getDocumentDetail(
   return {
     ...document,
     pages,
+  };
+}
+
+export async function renameDocumentTitle(
+  documentId: number,
+  nextTitle: string,
+) {
+  if (!isPositiveInteger(documentId)) {
+    throw new Error('Geçersiz belge kimliği.');
+  }
+
+  const normalizedTitle = normalizeDocumentTitleInput(nextTitle);
+  const db = await getDb();
+  const updatedAt = new Date().toISOString();
+
+  await db.runAsync(
+    `
+      UPDATE documents
+      SET title = ?, updated_at = ?
+      WHERE id = ?
+    `,
+    normalizedTitle,
+    updatedAt,
+    documentId,
+  );
+
+  return {
+    documentId,
+    title: normalizedTitle,
+    updatedAt,
+  };
+}
+
+export async function setDocumentFavorite(
+  documentId: number,
+  isFavorite: boolean,
+) {
+  if (!isPositiveInteger(documentId)) {
+    throw new Error('Geçersiz belge kimliği.');
+  }
+
+  const db = await getDb();
+  const updatedAt = new Date().toISOString();
+
+  await db.runAsync(
+    `
+      UPDATE documents
+      SET is_favorite = ?, updated_at = ?
+      WHERE id = ?
+    `,
+    isFavorite ? 1 : 0,
+    updatedAt,
+    documentId,
+  );
+
+  return {
+    documentId,
+    isFavorite,
+    updatedAt,
+  };
+}
+
+export async function setDocumentsFavorite(
+  documentIds: number[],
+  isFavorite: boolean,
+) {
+  const normalizedIds = Array.from(
+    new Set(documentIds.filter((value) => isPositiveInteger(value))),
+  );
+
+  if (!normalizedIds.length) {
+    throw new Error('İşlem yapılacak belge seçilmedi.');
+  }
+
+  const db = await getDb();
+  const updatedAt = new Date().toISOString();
+  const placeholders = normalizedIds.map(() => '?').join(', ');
+
+  await db.runAsync(
+    `
+      UPDATE documents
+      SET is_favorite = ?, updated_at = ?
+      WHERE id IN (${placeholders})
+    `,
+    isFavorite ? 1 : 0,
+    updatedAt,
+    ...normalizedIds,
+  );
+
+  return {
+    updatedCount: normalizedIds.length,
+    isFavorite,
+    updatedAt,
   };
 }
 
@@ -1527,11 +1634,6 @@ export async function exportDocumentToPdf(documentId: number) {
     }
 
     const previousPdfPath = document.pdf_path;
-    const billingState = await getStoredBillingState();
-    const capabilities = resolveBillingCapabilities(billingState);
-    const shouldAddFreeWatermark =
-      !capabilities.canExportPdf &&
-      resolvedOverlays.some((overlay) => overlay.type === 'stamp');
 
     const pdf = await buildPdfFromImages({
       title: document.title,
@@ -1540,7 +1642,7 @@ export async function exportDocumentToPdf(documentId: number) {
       author: 'PDF Kaşe',
       subject: 'Taranmış belge',
       creator: 'PDF Kaşe',
-      addFreeWatermark: shouldAddFreeWatermark,
+      addFreeWatermark: false,
     });
 
     await db.runAsync(
@@ -1585,6 +1687,9 @@ export const documentService = {
   getDocuments,
   getLatestDocument,
   getDocumentDetail,
+  renameDocumentTitle,
+  setDocumentFavorite,
+  setDocumentsFavorite,
   extractDocumentText,
   exportDocumentToWord,
   exportDocumentToExcel,
