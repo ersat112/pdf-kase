@@ -4,6 +4,7 @@ import { AppState, type AppStateStatus } from 'react-native';
 
 import { isAdMobRuntimeEnabled } from '../modules/ads/admob.config';
 import { admobService } from '../modules/ads/admob.service';
+import { resolveBillingCapabilities } from '../modules/billing/billing-capabilities';
 import { useBillingStore } from '../store/useBillingStore';
 
 type UseAdGateOptions = {
@@ -27,12 +28,27 @@ function canPassThrottle(bypassThrottle?: boolean) {
 export function useAdGate(options?: UseAdGateOptions) {
   const enableLifecycleAds = options?.enableLifecycleAds === true;
 
-  const isPro = useBillingStore((state) => state.isPro);
   const hydrated = useBillingStore((state) => state.hydrated);
+  const isPro = useBillingStore((state) => state.isPro);
+  const plan = useBillingStore((state) => state.plan);
+  const expiresAt = useBillingStore((state) => state.expiresAt);
+
+  const capabilities = useMemo(
+    () =>
+      resolveBillingCapabilities({
+        isPro,
+        plan,
+        expiresAt,
+      }),
+    [expiresAt, isPro, plan],
+  );
 
   const canShowAds = useMemo(
-    () => hydrated && !isPro && isAdMobRuntimeEnabled(),
-    [hydrated, isPro],
+    () =>
+      hydrated &&
+      !capabilities.canRemoveAds &&
+      isAdMobRuntimeEnabled(),
+    [capabilities.canRemoveAds, hydrated],
   );
 
   const lifecycleBootstrappedRef = useRef(false);

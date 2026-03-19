@@ -11,72 +11,15 @@ import {
 } from 'react-native';
 
 import { Screen } from '../../components/common/Screen';
+import {
+  BILLING_COMPARE_ROWS,
+  getBillingPlanLabel,
+  resolveBillingCapabilities,
+} from '../../modules/billing/billing-capabilities';
 import { useBillingStore } from '../../store/useBillingStore';
 import { Radius, Spacing, Typography, colors } from '../../theme';
 
 type PaidPlan = 'monthly' | 'yearly' | 'lifetime';
-
-type CompareRow = {
-  label: string;
-  freeValue: string;
-  premiumValue: string;
-};
-
-const COMPARE_ROWS: CompareRow[] = [
-  {
-    label: 'Tarama ve OCR',
-    freeValue: 'Var',
-    premiumValue: 'Var',
-  },
-  {
-    label: 'Akıllı sil / kırp / düzenleme',
-    freeValue: 'Var',
-    premiumValue: 'Var',
-  },
-  {
-    label: 'Kaşe / imza deneme',
-    freeValue: 'Var',
-    premiumValue: 'Var',
-  },
-  {
-    label: 'PDF kaydetme',
-    freeValue: 'Yok',
-    premiumValue: 'Var',
-  },
-  {
-    label: "Word'e çevirip kaydetme",
-    freeValue: 'Yok',
-    premiumValue: 'Var',
-  },
-  {
-    label: "Excel'e çevirip kaydetme",
-    freeValue: 'Yok',
-    premiumValue: 'Var',
-  },
-  {
-    label: 'PDF paylaşma',
-    freeValue: 'Yok',
-    premiumValue: 'Var',
-  },
-  {
-    label: 'Tam sayfa reklamlar',
-    freeValue: 'Var',
-    premiumValue: 'Yok',
-  },
-];
-
-function formatPlanLabel(plan: string) {
-  switch (plan) {
-    case 'monthly':
-      return 'Aylık';
-    case 'yearly':
-      return 'Yıllık';
-    case 'lifetime':
-      return 'Ömür boyu';
-    default:
-      return 'Free';
-  }
-}
 
 function formatExpiry(expiresAt: string | null) {
   if (!expiresAt) {
@@ -162,13 +105,25 @@ export function PricingScreen() {
 
   const [busyAction, setBusyAction] = useState<PaidPlan | 'restore' | 'reset' | null>(null);
 
+  const capabilities = useMemo(
+    () =>
+      resolveBillingCapabilities({
+        isPro,
+        plan,
+        expiresAt,
+      }),
+    [expiresAt, isPro, plan],
+  );
+
   const planSummary = useMemo(
     () => ({
       premiumLabel: isPro ? 'Açık' : 'Kapalı',
-      planLabel: formatPlanLabel(plan),
+      planLabel: getBillingPlanLabel(plan),
       expiryLabel: formatExpiry(expiresAt),
+      saveLabel: capabilities.canSave ? 'Açık' : 'Kapalı',
+      adsLabel: capabilities.canRemoveAds ? 'Kapalı' : 'Açık',
     }),
-    [expiresAt, isPro, plan],
+    [capabilities.canRemoveAds, capabilities.canSave, expiresAt, isPro, plan],
   );
 
   const isBusy = busyAction !== null;
@@ -180,7 +135,7 @@ export function PricingScreen() {
 
       Alert.alert(
         'Premium aktif',
-        `Mock premium plan aktif edildi: ${formatPlanLabel(nextPlan)}`,
+        `Mock premium plan aktif edildi: ${getBillingPlanLabel(nextPlan)}`,
       );
     } catch (error) {
       const message =
@@ -261,6 +216,8 @@ export function PricingScreen() {
           <Text style={styles.sectionTitle}>Mevcut durum</Text>
           <Text style={styles.statusLine}>Premium: {planSummary.premiumLabel}</Text>
           <Text style={styles.statusLine}>Plan: {planSummary.planLabel}</Text>
+          <Text style={styles.statusLine}>Kaydetme / export: {planSummary.saveLabel}</Text>
+          <Text style={styles.statusLine}>Reklamlar: {planSummary.adsLabel}</Text>
           <Text style={styles.statusLine}>Bitiş: {planSummary.expiryLabel}</Text>
         </View>
 
@@ -273,7 +230,7 @@ export function PricingScreen() {
             <Text style={styles.compareHeaderCell}>Premium</Text>
           </View>
 
-          {COMPARE_ROWS.map((row, index) => (
+          {BILLING_COMPARE_ROWS.map((row, index) => (
             <View
               key={row.label}
               style={[

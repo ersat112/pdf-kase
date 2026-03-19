@@ -19,6 +19,7 @@ import {
   homeSecondaryToolKeys,
 } from '../../features/tools/tools.registry';
 import { useAdGate } from '../../hooks/useAdGate';
+import { resolveBillingCapabilities } from '../../modules/billing/billing-capabilities';
 import { documentService } from '../../modules/documents/document.service';
 import type { AppTabScreenProps } from '../../navigation/types';
 import { useBillingStore } from '../../store/useBillingStore';
@@ -492,7 +493,20 @@ function RecentDocumentMiniCard({
 }
 
 export function HomeScreen({ navigation }: Props) {
-  const isPro = useBillingStore((state) => state.isPro);
+  const billingIsPro = useBillingStore((state) => state.isPro);
+  const billingPlan = useBillingStore((state) => state.plan);
+  const billingExpiresAt = useBillingStore((state) => state.expiresAt);
+
+  const capabilities = useMemo(
+    () =>
+      resolveBillingCapabilities({
+        isPro: billingIsPro,
+        plan: billingPlan,
+        expiresAt: billingExpiresAt,
+      }),
+    [billingExpiresAt, billingIsPro, billingPlan],
+  );
+
   const { preloadInterstitial } = useAdGate();
 
   const [documents, setDocuments] = useState<HomeDocument[]>([]);
@@ -601,7 +615,7 @@ export function HomeScreen({ navigation }: Props) {
           <View style={styles.heroTextWrap}>
             <Text style={styles.heroTitle}>PDF Kaşe</Text>
             <Text style={styles.heroSubtitle}>
-              Tara, düzenle, OCR yap, çevir ve profesyonel belge akışını tek yerden yönet.
+              Tara, düzenle, OCR yap, çevir ve sonucu local-first belge akışında cihazında yönet.
             </Text>
           </View>
 
@@ -706,7 +720,7 @@ export function HomeScreen({ navigation }: Props) {
           ))}
         </View>
 
-        {!isPro ? (
+        {!capabilities.canSave ? (
           <View style={styles.premiumCard}>
             <View style={styles.premiumHeaderRow}>
               <View style={styles.premiumIconWrap}>
@@ -716,7 +730,7 @@ export function HomeScreen({ navigation }: Props) {
               <View style={styles.premiumTextWrap}>
                 <Text style={styles.premiumTitle}>Free ve Premium farkı</Text>
                 <Text style={styles.premiumSubtitle}>
-                  Free sürümde tüm araçları kullanırsın. Kaydetme, export, paylaşma ve reklamsız kullanım premium ile açılır.
+                  Tüm araçlar açık. Kaydetme, export, paylaşma ve reklamsız kullanım premium ile açılır.
                 </Text>
               </View>
             </View>
@@ -738,13 +752,13 @@ export function HomeScreen({ navigation }: Props) {
               <Text style={styles.proTitle}>Premium aktif</Text>
             </View>
             <Text style={styles.proSubtitle}>
-              Reklamsız kullanım ve kaydetme / paylaşma özellikleri açık.
+              Kaydetme, paylaşma ve dışa aktarma açık. Reklamlar kapalı.
             </Text>
           </View>
         )}
       </ScrollView>
 
-      <BannerStrip hidden={isPro} />
+      <BannerStrip hidden={capabilities.canRemoveAds} />
     </View>
   );
 }

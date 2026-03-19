@@ -3,8 +3,11 @@ import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { Image } from 'react-native';
 
 import { getDb } from '../../db/sqlite';
-import { useBillingStore } from '../../store/useBillingStore';
 import { getAssetById } from '../assets/asset.service';
+import { resolveBillingCapabilities } from '../billing/billing-capabilities';
+import {
+  getStoredBillingState,
+} from '../billing/billing.service';
 import {
   buildExcelDocumentBytes,
   type BuildExcelDocumentInput,
@@ -1524,9 +1527,11 @@ export async function exportDocumentToPdf(documentId: number) {
     }
 
     const previousPdfPath = document.pdf_path;
-    const isPro = useBillingStore.getState().isPro;
+    const billingState = await getStoredBillingState();
+    const capabilities = resolveBillingCapabilities(billingState);
     const shouldAddFreeWatermark =
-      !isPro && resolvedOverlays.some((overlay) => overlay.type === 'stamp');
+      !capabilities.canExportPdf &&
+      resolvedOverlays.some((overlay) => overlay.type === 'stamp');
 
     const pdf = await buildPdfFromImages({
       title: document.title,

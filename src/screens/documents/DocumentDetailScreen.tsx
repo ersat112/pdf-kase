@@ -19,6 +19,11 @@ import {
 import { Screen } from '../../components/common/Screen';
 import { useAdGate } from '../../hooks/useAdGate';
 import {
+  getPremiumGateMessage,
+  resolveBillingCapabilities,
+  type PremiumCapabilityKey,
+} from '../../modules/billing/billing-capabilities';
+import {
   appendScannedPagesToDocument,
   autoCropDocumentPage,
   exportDocumentToExcel,
@@ -198,7 +203,20 @@ function SecondaryButton({
 export function DocumentDetailScreen({ route, navigation }: Props) {
   const { documentId } = route.params;
   const { preloadInterstitial, runAfterTask } = useAdGate();
-  const isPro = useBillingStore((state) => state.isPro);
+
+  const billingIsPro = useBillingStore((state) => state.isPro);
+  const billingPlan = useBillingStore((state) => state.plan);
+  const billingExpiresAt = useBillingStore((state) => state.expiresAt);
+
+  const capabilities = useMemo(
+    () =>
+      resolveBillingCapabilities({
+        isPro: billingIsPro,
+        plan: billingPlan,
+        expiresAt: billingExpiresAt,
+      }),
+    [billingExpiresAt, billingIsPro, billingPlan],
+  );
 
   const [document, setDocument] = useState<DocumentDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -251,11 +269,11 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
     }
   }, []);
 
-  const promptPremiumForSave = useCallback(
-    (featureLabel: string) => {
+  const promptPremiumForCapability = useCallback(
+    (capability: PremiumCapabilityKey) => {
       Alert.alert(
         'Premium gerekli',
-        `${featureLabel} özelliği kaydetme / dışa aktarma aşamasında premium gerektirir. Free sürümde tüm araçları deneyebilir, premium ile dosyanı kaydedebilirsin.`,
+        getPremiumGateMessage(capability),
         [
           { text: 'Şimdi değil', style: 'cancel' },
           {
@@ -384,8 +402,8 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
       return;
     }
 
-    if (!isPro) {
-      promptPremiumForSave('PDF kaydetme');
+    if (!capabilities.canExportPdf) {
+      promptPremiumForCapability('export_pdf');
       return;
     }
 
@@ -404,7 +422,16 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
     } finally {
       resetBusyState();
     }
-  }, [document?.pages.length, documentId, isPro, loadDocument, promptPremiumForSave, resetBusyState, runAfterTask, setBusyState]);
+  }, [
+    capabilities.canExportPdf,
+    document?.pages.length,
+    documentId,
+    loadDocument,
+    promptPremiumForCapability,
+    resetBusyState,
+    runAfterTask,
+    setBusyState,
+  ]);
 
   const handleSharePdf = useCallback(async () => {
     if (!document?.pdf_path) {
@@ -412,8 +439,8 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
       return;
     }
 
-    if (!isPro) {
-      promptPremiumForSave('PDF paylaşma');
+    if (!capabilities.canShare) {
+      promptPremiumForCapability('share');
       return;
     }
 
@@ -436,7 +463,13 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
     } finally {
       resetBusyState();
     }
-  }, [document, isPro, promptPremiumForSave, resetBusyState, setBusyState]);
+  }, [
+    capabilities.canShare,
+    document,
+    promptPremiumForCapability,
+    resetBusyState,
+    setBusyState,
+  ]);
 
   const handleExportWord = useCallback(async () => {
     if (busyRef.current) {
@@ -448,8 +481,8 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
       return;
     }
 
-    if (!isPro) {
-      promptPremiumForSave("Word'e çevirme");
+    if (!capabilities.canExportWord) {
+      promptPremiumForCapability('export_word');
       return;
     }
 
@@ -478,7 +511,17 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
     } finally {
       resetBusyState();
     }
-  }, [document?.pages.length, document?.title, documentId, isPro, loadDocument, promptPremiumForSave, resetBusyState, runAfterTask, setBusyState]);
+  }, [
+    capabilities.canExportWord,
+    document?.pages.length,
+    document?.title,
+    documentId,
+    loadDocument,
+    promptPremiumForCapability,
+    resetBusyState,
+    runAfterTask,
+    setBusyState,
+  ]);
 
   const handleExportExcel = useCallback(async () => {
     if (busyRef.current) {
@@ -490,8 +533,8 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
       return;
     }
 
-    if (!isPro) {
-      promptPremiumForSave("Excel'e çevirme");
+    if (!capabilities.canExportExcel) {
+      promptPremiumForCapability('export_excel');
       return;
     }
 
@@ -520,7 +563,17 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
     } finally {
       resetBusyState();
     }
-  }, [document?.pages.length, document?.title, documentId, isPro, loadDocument, promptPremiumForSave, resetBusyState, runAfterTask, setBusyState]);
+  }, [
+    capabilities.canExportExcel,
+    document?.pages.length,
+    document?.title,
+    documentId,
+    loadDocument,
+    promptPremiumForCapability,
+    resetBusyState,
+    runAfterTask,
+    setBusyState,
+  ]);
 
   const handleRetakePage = useCallback(async () => {
     if (busyRef.current || !currentPage) {
@@ -714,15 +767,17 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
 
         <View style={styles.summaryItem}>
           <Text style={styles.summaryLabel}>Plan</Text>
-          <Text style={styles.summaryValue}>{isPro ? 'Premium' : 'Free'}</Text>
+          <Text style={styles.summaryValue}>
+            {capabilities.canSave ? 'Premium' : 'Free'}
+          </Text>
         </View>
       </View>
 
-      {!isPro ? (
+      {!capabilities.canSave ? (
         <View style={styles.noticeCard}>
           <Text style={styles.noticeTitle}>Free sürüm</Text>
           <Text style={styles.noticeText}>
-            Tüm araçları kullanabilirsin. Kaydetme / export / paylaşma aşamasında premium gerekir.
+            Tüm araçlar açık. Kaydetme, paylaşma ve dışa aktarma adımları premium ile tamamlanır.
           </Text>
         </View>
       ) : null}
@@ -809,26 +864,32 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
 
         <View style={styles.outputActions}>
           <PrimaryButton
-            title={isPro ? (document.pdf_path ? 'PDF güncelle' : 'PDF oluştur') : 'PDF kaydet (Premium)'}
+            title={
+              capabilities.canExportPdf
+                ? document.pdf_path
+                  ? 'PDF güncelle'
+                  : 'PDF oluştur'
+                : 'PDF kaydet (Premium)'
+            }
             onPress={() => void handleExportPdf()}
             disabled={busy}
           />
           <SecondaryButton
-            title={isPro ? 'PDF paylaş' : 'PDF paylaş (Premium)'}
+            title={capabilities.canShare ? 'PDF paylaş' : 'PDF paylaş (Premium)'}
             onPress={() => void handleSharePdf()}
-            disabled={busy || (!document.pdf_path && isPro)}
+            disabled={busy || (!document.pdf_path && capabilities.canShare)}
           />
           <SecondaryButton
-            title={isPro ? "Word'e çevir" : "Word'e çevir (Premium)"}
+            title={capabilities.canExportWord ? "Word'e çevir" : "Word'e çevir (Premium)"}
             onPress={() => void handleExportWord()}
             disabled={busy}
           />
           <SecondaryButton
-            title={isPro ? "Excel'e çevir" : "Excel'e çevir (Premium)"}
+            title={capabilities.canExportExcel ? "Excel'e çevir" : "Excel'e çevir (Premium)"}
             onPress={() => void handleExportExcel()}
             disabled={busy}
           />
-          {!isPro ? (
+          {!capabilities.canSave ? (
             <SecondaryButton
               title="Premium farklarını gör"
               onPress={() => navigation.navigate('Pricing')}
