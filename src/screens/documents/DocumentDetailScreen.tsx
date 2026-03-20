@@ -14,6 +14,13 @@ import {
 
 import { Screen } from '../../components/common/Screen';
 import { LocalTrustBadge } from '../../components/trust/LocalTrustBadge';
+import {
+  getBillingPlanLabel,
+  getPremiumGateFeatureLabel,
+  getPremiumGateMessage,
+  resolveBillingCapabilities,
+  type PremiumCapabilityKey,
+} from '../../modules/billing/billing-capabilities';
 import type {
   DocumentAuditEntry,
   DocumentAuditStatus,
@@ -33,6 +40,7 @@ import {
   type DocumentDetail,
 } from '../../modules/documents/document.service';
 import type { RootScreenProps } from '../../navigation/types';
+import { useBillingStore } from '../../store/useBillingStore';
 import {
   Radius,
   Shadows,
@@ -277,6 +285,11 @@ export function DocumentDetailScreen({
 }: RootScreenProps<'DocumentDetail'>) {
   const documentId = route.params.documentId;
 
+  const billingHydrated = useBillingStore((state) => state.hydrated);
+  const isPro = useBillingStore((state) => state.isPro);
+  const plan = useBillingStore((state) => state.plan);
+  const expiresAt = useBillingStore((state) => state.expiresAt);
+
   const [document, setDocument] = useState<DocumentDetail | null>(null);
   const [auditEntries, setAuditEntries] = useState<DocumentAuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -284,6 +297,16 @@ export function DocumentDetailScreen({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [translationPreview, setTranslationPreview] =
     useState<TranslationPreview | null>(null);
+
+  const capabilities = useMemo(
+    () =>
+      resolveBillingCapabilities({
+        isPro,
+        plan,
+        expiresAt,
+      }),
+    [expiresAt, isPro, plan],
+  );
 
   const loadData = useCallback(
     async (showLoading = true) => {
@@ -345,6 +368,35 @@ export function DocumentDetailScreen({
     [document],
   );
 
+  const pdfActionLabel = document?.pdf_path
+    ? 'PDF yeniden üret'
+    : 'PDF üret';
+  const wordActionLabel = document?.word_path
+    ? 'Word yeniden üret'
+    : 'Word dışa aktar';
+
+  const pdfActionCaption = !billingHydrated
+    ? 'Premium durumu yükleniyor'
+    : capabilities.canExportPdf
+    ? document?.pdf_path
+      ? 'Mevcut PDF çıktısını güncelle'
+      : 'Güncel sayfalardan PDF oluştur'
+    : 'Premium ile PDF kaydetmeyi aç';
+
+  const wordActionCaption = !billingHydrated
+    ? 'Premium durumu yükleniyor'
+    : capabilities.canExportWord
+    ? document?.word_path
+      ? 'Mevcut Word çıktısını güncelle'
+      : 'OCR metnini Word olarak hazırla'
+    : 'Premium ile Word kaydetmeyi aç';
+
+  const excelActionCaption = !billingHydrated
+    ? 'Premium durumu yükleniyor'
+    : capabilities.canExportExcel
+    ? 'OCR metnini Excel olarak hazırla'
+    : 'Premium ile Excel kaydetmeyi aç';
+
   const safeLogAudit = useCallback(
     async ({
       actionKey,
@@ -373,6 +425,45 @@ export function DocumentDetailScreen({
       }
     },
     [documentId],
+  );
+
+  const handlePremiumGate = useCallback(
+    async ({
+      capability,
+      actionKey,
+      actionLabel,
+    }: {
+      capability: PremiumCapabilityKey;
+      actionKey: 'pdf' | 'word' | 'excel';
+      actionLabel: string;
+    }) => {
+      const reason = `${getPremiumGateFeatureLabel(
+        capability,
+      )} özelliği premium gerektiriyor.`;
+
+      await safeLogAudit({
+        actionKey,
+        actionLabel,
+        status: 'requires_premium',
+        reason,
+      });
+
+      Alert.alert(
+        'Premium gerekli',
+        getPremiumGateMessage(capability),
+        [
+          {
+            text: 'Şimdi değil',
+            style: 'cancel',
+          },
+          {
+            text: "Premium'u gör",
+            onPress: () => navigation.navigate('Pricing'),
+          },
+        ],
+      );
+    },
+    [navigation, safeLogAudit],
   );
 
   const runAuditedAction = useCallback(
@@ -491,36 +582,97 @@ export function DocumentDetailScreen({
       return;
     }
 
+    if (!billingHydrated) {
+      return;
+    }
+
+    if (!capabilities.canExportPdf) {
+      await handlePremiumGate({
+        capability: 'export_pdf',
+        actionKey: 'pdf',
+        actionLabel: pdfActionLabel,
+      });
+      return;
+    }
+
     await runAuditedAction({
       actionKey: 'pdf',
-      actionLabel: 'PDF üret',
+      actionLabel: pdfActionLabel,
       run: () => exportDocumentToPdf(document.id),
-      successMessage: () => 'PDF çıktısı oluşturuldu.',
+      successMessage: () =>
+        document.pdf_path ? 'PDF yeniden oluşturuldu.' : 'PDF çıktısı oluşturuldu.',
       successMetadata: (result) => ({
         fileName: result.fileName,
+        reExported: Boolean(document.pdf_path),
       }),
     });
-  }, [document, hasPageBasedDocument, runAuditedAction]);
+  }, [
+    billingHydrated,
+    capabilities.canExportPdf,
+    document,
+    handlePremiumGate,
+    hasPageBasedDocument,
+    pdfActionLabel,
+    runAuditedAction,
+  ]);
 
   const handleExportWord = useCallback(async () => {
     if (!document || !hasPageBasedDocument) {
       return;
     }
 
+    if (!billingHydrated) {
+      return;
+    }
+
+    if (!capabilities.canExportWord) {
+      await handlePremiumGate({
+        capability: 'export_word',
+        actionKey: 'word',
+        actionLabel: wordActionLabel,
+      });
+      return;
+    }
+
     await runAuditedAction({
       actionKey: 'word',
-      actionLabel: 'Word dışa aktar',
+      actionLabel: wordActionLabel,
       run: () => exportDocumentToWord(document.id),
-      successMessage: (result) => `${result.fileName} hazır.`,
+      successMessage: (result) =>
+        document.word_path
+          ? `${result.fileName} yeniden oluşturuldu.`
+          : `${result.fileName} hazır.`,
       successMetadata: (result) => ({
         fileName: result.fileName,
         textLength: result.textLength,
+        reExported: Boolean(document.word_path),
       }),
     });
-  }, [document, hasPageBasedDocument, runAuditedAction]);
+  }, [
+    billingHydrated,
+    capabilities.canExportWord,
+    document,
+    handlePremiumGate,
+    hasPageBasedDocument,
+    runAuditedAction,
+    wordActionLabel,
+  ]);
 
   const handleExportExcel = useCallback(async () => {
     if (!document || !hasPageBasedDocument) {
+      return;
+    }
+
+    if (!billingHydrated) {
+      return;
+    }
+
+    if (!capabilities.canExportExcel) {
+      await handlePremiumGate({
+        capability: 'export_excel',
+        actionKey: 'excel',
+        actionLabel: 'Excel dışa aktar',
+      });
       return;
     }
 
@@ -534,7 +686,14 @@ export function DocumentDetailScreen({
         textLength: result.textLength,
       }),
     });
-  }, [document, hasPageBasedDocument, runAuditedAction]);
+  }, [
+    billingHydrated,
+    capabilities.canExportExcel,
+    document,
+    handlePremiumGate,
+    hasPageBasedDocument,
+    runAuditedAction,
+  ]);
 
   const handleTranslate = useCallback(async () => {
     if (!document || !hasPageBasedDocument) {
@@ -657,12 +816,19 @@ export function DocumentDetailScreen({
                     tone="default"
                     icon="layers-outline"
                   />
-                  <InfoBadge label="LOCAL" tone="muted" icon="shield-checkmark-outline" />
+                  <InfoBadge
+                    label="LOCAL"
+                    tone="muted"
+                    icon="shield-checkmark-outline"
+                  />
                   {favorite ? (
                     <InfoBadge label="Favori" tone="success" icon="star" />
                   ) : null}
+                  {document.pdf_path ? (
+                    <InfoBadge label="PDF Kayıtlı" tone="success" />
+                  ) : null}
                   {document.word_path ? (
-                    <InfoBadge label="WORD Hazır" tone="accent" />
+                    <InfoBadge label="WORD Kayıtlı" tone="accent" />
                   ) : null}
                   {document.collection_name ? (
                     <InfoBadge label={document.collection_name} tone="default" />
@@ -697,6 +863,67 @@ export function DocumentDetailScreen({
             ) : null}
           </View>
 
+          <View style={styles.planCard}>
+            <View style={styles.planHeader}>
+              <View style={styles.planTextWrap}>
+                <Text style={styles.planTitle}>
+                  {isPro ? 'Premium aktif' : 'Free plan'}
+                </Text>
+                <Text style={styles.planText}>
+                  Plan: {getBillingPlanLabel(plan)}
+                  {expiresAt ? ` • Bitiş: ${formatDateTime(expiresAt)}` : ''}
+                </Text>
+              </View>
+
+              <Pressable
+                onPress={() => navigation.navigate('Pricing')}
+                style={({ pressed }) => [
+                  styles.planActionButton,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={styles.planActionButtonText}>
+                  {isPro ? 'Planı gör' : "Premium'u gör"}
+                </Text>
+              </Pressable>
+            </View>
+
+            {!billingHydrated ? (
+              <View style={styles.inlineLoadingRow}>
+                <ActivityIndicator size="small" color={colors.primary} />
+                <Text style={styles.inlineLoadingText}>
+                  Premium durumu yükleniyor...
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.capabilityRow}>
+                <InfoBadge
+                  label={capabilities.canSave ? 'Kaydetme Açık' : 'Kaydetme Kilitli'}
+                  tone={capabilities.canSave ? 'success' : 'warning'}
+                />
+                <InfoBadge
+                  label={capabilities.canShare ? 'Paylaşma Açık' : 'Paylaşma Kilitli'}
+                  tone={capabilities.canShare ? 'success' : 'warning'}
+                />
+                <InfoBadge
+                  label={capabilities.canRemoveAds ? 'Reklamsız' : 'Reklamlı'}
+                  tone={capabilities.canRemoveAds ? 'success' : 'muted'}
+                />
+              </View>
+            )}
+
+            {!isPro ? (
+              <Text style={styles.planHint}>
+                Free kullanıcı tüm araçları deneyebilir. PDF / Word / Excel
+                kaydetme ve paylaşma premium ile açılır.
+              </Text>
+            ) : (
+              <Text style={styles.planHint}>
+                Premium aktif. Export ve paylaşma yüzeyleri açık.
+              </Text>
+            )}
+          </View>
+
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Hızlı işlemler</Text>
             {activeActionKey ? (
@@ -725,25 +952,37 @@ export function DocumentDetailScreen({
             />
             <ActionButton
               icon="document-outline"
-              label="PDF üret"
-              caption="Güncel sayfalardan PDF oluştur"
-              disabled={!hasPageBasedDocument || activeActionKey !== null}
+              label={pdfActionLabel}
+              caption={pdfActionCaption}
+              disabled={
+                !hasPageBasedDocument ||
+                activeActionKey !== null ||
+                !billingHydrated
+              }
               loading={activeActionKey === 'pdf'}
               onPress={() => void handleExportPdf()}
             />
             <ActionButton
               icon="document-text-outline"
-              label="Word dışa aktar"
-              caption="OCR metnini Word olarak hazırla"
-              disabled={!hasPageBasedDocument || activeActionKey !== null}
+              label={wordActionLabel}
+              caption={wordActionCaption}
+              disabled={
+                !hasPageBasedDocument ||
+                activeActionKey !== null ||
+                !billingHydrated
+              }
               loading={activeActionKey === 'word'}
               onPress={() => void handleExportWord()}
             />
             <ActionButton
               icon="grid-outline"
               label="Excel dışa aktar"
-              caption="OCR metnini Excel olarak hazırla"
-              disabled={!hasPageBasedDocument || activeActionKey !== null}
+              caption={excelActionCaption}
+              disabled={
+                !hasPageBasedDocument ||
+                activeActionKey !== null ||
+                !billingHydrated
+              }
               loading={activeActionKey === 'excel'}
               onPress={() => void handleExportExcel()}
             />
@@ -755,6 +994,57 @@ export function DocumentDetailScreen({
               loading={activeActionKey === 'translate'}
               onPress={() => void handleTranslate()}
             />
+          </View>
+
+          <View style={styles.outputCard}>
+            <View style={styles.outputHeader}>
+              <Text style={styles.outputTitle}>Kayıt ve export durumu</Text>
+              {!isPro ? (
+                <InfoBadge label="Premium yüzeyi" tone="warning" />
+              ) : (
+                <InfoBadge label="Export açık" tone="success" />
+              )}
+            </View>
+
+            <View style={styles.outputRow}>
+              <Text style={styles.outputLabel}>PDF</Text>
+              {document.pdf_path ? (
+                <InfoBadge label="Hazır" tone="success" />
+              ) : capabilities.canExportPdf ? (
+                <InfoBadge label="Hazır değil" tone="muted" />
+              ) : (
+                <InfoBadge label="Premium gerekli" tone="warning" />
+              )}
+            </View>
+
+            <View style={styles.outputRow}>
+              <Text style={styles.outputLabel}>Word</Text>
+              {document.word_path ? (
+                <InfoBadge label="Hazır" tone="accent" />
+              ) : capabilities.canExportWord ? (
+                <InfoBadge label="Hazır değil" tone="muted" />
+              ) : (
+                <InfoBadge label="Premium gerekli" tone="warning" />
+              )}
+            </View>
+
+            <View style={styles.outputRow}>
+              <Text style={styles.outputLabel}>Excel</Text>
+              {capabilities.canExportExcel ? (
+                <InfoBadge label="İsteğe bağlı export" tone="accent" />
+              ) : (
+                <InfoBadge label="Premium gerekli" tone="warning" />
+              )}
+            </View>
+
+            <View style={styles.outputRow}>
+              <Text style={styles.outputLabel}>Paylaşma</Text>
+              {capabilities.canShare ? (
+                <InfoBadge label="Açık" tone="success" />
+              ) : (
+                <InfoBadge label="Premium gerekli" tone="warning" />
+              )}
+            </View>
           </View>
 
           {document.ocr_status === 'failed' && document.ocr_error ? (
@@ -1029,6 +1319,67 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontSize: 13,
   },
+  planCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: Radius.xl,
+    padding: Spacing.lg,
+    gap: Spacing.md,
+    marginBottom: Spacing.lg,
+    ...Shadows.sm,
+  },
+  planHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: Spacing.md,
+  },
+  planTextWrap: {
+    flex: 1,
+    gap: 4,
+  },
+  planTitle: {
+    ...Typography.titleSmall,
+    color: colors.text,
+  },
+  planText: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
+  },
+  planActionButton: {
+    minHeight: 38,
+    borderRadius: Radius.lg,
+    backgroundColor: colors.primary,
+    paddingHorizontal: Spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  planActionButtonText: {
+    color: colors.onPrimary,
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  capabilityRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  planHint: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
+  },
+  inlineLoadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  inlineLoadingText: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+  },
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -1085,6 +1436,38 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 12,
     lineHeight: 18,
+  },
+  outputCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: Radius.xl,
+    padding: Spacing.lg,
+    gap: Spacing.sm,
+    marginBottom: Spacing.lg,
+    ...Shadows.sm,
+  },
+  outputHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.md,
+    marginBottom: 4,
+  },
+  outputTitle: {
+    ...Typography.titleSmall,
+    color: colors.text,
+  },
+  outputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.md,
+  },
+  outputLabel: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    fontWeight: '700',
   },
   resultCard: {
     backgroundColor: colors.card,
