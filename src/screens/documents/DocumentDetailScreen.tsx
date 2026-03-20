@@ -30,6 +30,17 @@ import {
   logDocumentAuditEvent,
 } from '../../modules/documents/document-audit.service';
 import {
+  resolveDocumentIsFavorite,
+  resolveDocumentPageCount,
+  resolveDocumentPdfPath,
+  resolveDocumentStatusLabel,
+  resolveDocumentStatusTone,
+  resolveDocumentThumbnailPath,
+  resolveDocumentTitle,
+  resolveDocumentUpdatedAt,
+  resolveDocumentWordPath,
+} from '../../modules/documents/document-presentation';
+import {
   exportDocumentToExcel,
   exportDocumentToPdf,
   exportDocumentToWord,
@@ -64,10 +75,6 @@ type TranslationPreview = {
   sourceLanguage: string | null;
 };
 
-function isFavorite(document: DocumentDetail) {
-  return document.is_favorite === 1;
-}
-
 function formatDateTime(value: string | null | undefined) {
   if (!value) {
     return 'Yok';
@@ -85,43 +92,6 @@ function formatDateTime(value: string | null | undefined) {
     hour: '2-digit',
     minute: '2-digit',
   });
-}
-
-function getDocumentStatusLabel(document: DocumentDetail) {
-  if (document.pdf_path && document.status === 'ready') {
-    return 'PDF Hazır';
-  }
-
-  if (document.ocr_status === 'ready') {
-    return 'OCR Hazır';
-  }
-
-  switch (document.status) {
-    case 'draft':
-      return 'Taslak';
-    case 'ready':
-      return 'Hazır';
-    case 'exported':
-      return 'PDF Oluşturuldu';
-    default:
-      return document.status;
-  }
-}
-
-function getDocumentStatusTone(document: DocumentDetail) {
-  if (document.pdf_path && document.status === 'ready') {
-    return 'success' as const;
-  }
-
-  if (document.ocr_status === 'ready') {
-    return 'accent' as const;
-  }
-
-  if (document.status === 'draft') {
-    return 'muted' as const;
-  }
-
-  return 'default' as const;
 }
 
 function getAuditStatusLabel(status: DocumentAuditStatus) {
@@ -356,46 +326,53 @@ export function DocumentDetailScreen({
     }
 
     navigation.setOptions({
-      title: document.title,
+      title: resolveDocumentTitle(document),
     });
   }, [document, navigation]);
 
-  const pageCount = document?.pages.length ?? 0;
+  const pageCount = document ? resolveDocumentPageCount(document) : 0;
   const hasPageBasedDocument = pageCount > 0;
-  const statusTone = document ? getDocumentStatusTone(document) : 'default';
+  const statusTone = document ? resolveDocumentStatusTone(document) : 'default';
   const favorite = useMemo(
-    () => (document ? isFavorite(document) : false),
+    () => (document ? resolveDocumentIsFavorite(document) : false),
     [document],
   );
+  const documentTitle = document ? resolveDocumentTitle(document) : 'Belge';
+  const documentUpdatedAt = document ? resolveDocumentUpdatedAt(document) : null;
+  const documentPdfPath = document ? resolveDocumentPdfPath(document) : null;
+  const documentWordPath = document ? resolveDocumentWordPath(document) : null;
+  const documentThumbnailPath = document
+    ? resolveDocumentThumbnailPath(document)
+    : null;
 
-  const pdfActionLabel = document?.pdf_path
+  const pdfActionLabel = documentPdfPath
     ? 'PDF yeniden üret'
     : 'PDF üret';
-  const wordActionLabel = document?.word_path
+  const wordActionLabel = documentWordPath
     ? 'Word yeniden üret'
     : 'Word dışa aktar';
 
   const pdfActionCaption = !billingHydrated
     ? 'Premium durumu yükleniyor'
     : capabilities.canExportPdf
-      ? document?.pdf_path
-        ? 'Mevcut PDF çıktısını güncelle'
-        : 'Güncel sayfalardan PDF oluştur'
-      : 'Premium ile PDF kaydetmeyi aç';
+    ? documentPdfPath
+      ? 'Mevcut PDF çıktısını güncelle'
+      : 'Güncel sayfalardan PDF oluştur'
+    : 'Premium ile PDF kaydetmeyi aç';
 
   const wordActionCaption = !billingHydrated
     ? 'Premium durumu yükleniyor'
     : capabilities.canExportWord
-      ? document?.word_path
-        ? 'Mevcut Word çıktısını güncelle'
-        : 'OCR metnini Word olarak hazırla'
-      : 'Premium ile Word kaydetmeyi aç';
+    ? documentWordPath
+      ? 'Mevcut Word çıktısını güncelle'
+      : 'OCR metnini Word olarak hazırla'
+    : 'Premium ile Word kaydetmeyi aç';
 
   const excelActionCaption = !billingHydrated
     ? 'Premium durumu yükleniyor'
     : capabilities.canExportExcel
-      ? 'OCR metnini Excel olarak hazırla'
-      : 'Premium ile Excel kaydetmeyi aç';
+    ? 'OCR metnini Excel olarak hazırla'
+    : 'Premium ile Excel kaydetmeyi aç';
 
   const safeLogAudit = useCallback(
     async ({
@@ -533,7 +510,7 @@ export function DocumentDetailScreen({
       return;
     }
 
-    const nextFavorite = !isFavorite(document);
+    const nextFavorite = !resolveDocumentIsFavorite(document);
     setActiveActionKey('favorite');
 
     try {
@@ -600,16 +577,17 @@ export function DocumentDetailScreen({
       actionLabel: pdfActionLabel,
       run: () => exportDocumentToPdf(document.id),
       successMessage: () =>
-        document.pdf_path ? 'PDF yeniden oluşturuldu.' : 'PDF çıktısı oluşturuldu.',
+        documentPdfPath ? 'PDF yeniden oluşturuldu.' : 'PDF çıktısı oluşturuldu.',
       successMetadata: (result) => ({
         fileName: result.fileName,
-        reExported: Boolean(document.pdf_path),
+        reExported: Boolean(documentPdfPath),
       }),
     });
   }, [
     billingHydrated,
     capabilities.canExportPdf,
     document,
+    documentPdfPath,
     handlePremiumGate,
     hasPageBasedDocument,
     pdfActionLabel,
@@ -639,19 +617,20 @@ export function DocumentDetailScreen({
       actionLabel: wordActionLabel,
       run: () => exportDocumentToWord(document.id),
       successMessage: (result) =>
-        document.word_path
+        documentWordPath
           ? `${result.fileName} yeniden oluşturuldu.`
           : `${result.fileName} hazır.`,
       successMetadata: (result) => ({
         fileName: result.fileName,
         textLength: result.textLength,
-        reExported: Boolean(document.word_path),
+        reExported: Boolean(documentWordPath),
       }),
     });
   }, [
     billingHydrated,
     capabilities.canExportWord,
     document,
+    documentWordPath,
     handlePremiumGate,
     hasPageBasedDocument,
     runAuditedAction,
@@ -758,9 +737,9 @@ export function DocumentDetailScreen({
           <View style={styles.heroCard}>
             <View style={styles.heroHeader}>
               <View style={styles.thumbnailFrame}>
-                {document.thumbnail_path ? (
+                {documentThumbnailPath ? (
                   <Image
-                    source={{ uri: document.thumbnail_path }}
+                    source={{ uri: documentThumbnailPath }}
                     style={styles.thumbnail}
                   />
                 ) : (
@@ -779,7 +758,7 @@ export function DocumentDetailScreen({
 
               <View style={styles.heroContent}>
                 <View style={styles.heroTitleRow}>
-                  <Text style={styles.heroTitle}>{document.title}</Text>
+                  <Text style={styles.heroTitle}>{documentTitle}</Text>
 
                   <Pressable
                     onPress={() => void handleToggleFavorite()}
@@ -803,12 +782,12 @@ export function DocumentDetailScreen({
                 </View>
 
                 <Text style={styles.heroMeta}>
-                  Güncellendi: {formatDateTime(document.updated_at)}
+                  Güncellendi: {formatDateTime(documentUpdatedAt)}
                 </Text>
 
                 <View style={styles.badgeRow}>
                   <InfoBadge
-                    label={getDocumentStatusLabel(document)}
+                    label={resolveDocumentStatusLabel(document)}
                     tone={statusTone}
                   />
                   <InfoBadge
@@ -824,10 +803,10 @@ export function DocumentDetailScreen({
                   {favorite ? (
                     <InfoBadge label="Favori" tone="success" icon="star" />
                   ) : null}
-                  {document.pdf_path ? (
+                  {documentPdfPath ? (
                     <InfoBadge label="PDF Kayıtlı" tone="success" />
                   ) : null}
-                  {document.word_path ? (
+                  {documentWordPath ? (
                     <InfoBadge label="WORD Kayıtlı" tone="accent" />
                   ) : null}
                   {document.collection_name ? (
@@ -1008,7 +987,7 @@ export function DocumentDetailScreen({
 
             <View style={styles.outputRow}>
               <Text style={styles.outputLabel}>PDF</Text>
-              {document.pdf_path ? (
+              {documentPdfPath ? (
                 <InfoBadge label="Hazır" tone="success" />
               ) : capabilities.canExportPdf ? (
                 <InfoBadge label="Hazır değil" tone="muted" />
@@ -1019,7 +998,7 @@ export function DocumentDetailScreen({
 
             <View style={styles.outputRow}>
               <Text style={styles.outputLabel}>Word</Text>
-              {document.word_path ? (
+              {documentWordPath ? (
                 <InfoBadge label="Hazır" tone="accent" />
               ) : capabilities.canExportWord ? (
                 <InfoBadge label="Hazır değil" tone="muted" />

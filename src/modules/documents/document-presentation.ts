@@ -6,6 +6,7 @@ export type DocumentSurfaceItem = {
   ocr_status?: string | null;
   pageCount?: number | null;
   page_count?: number | null;
+  pages?: Array<unknown> | null;
   pdfPath?: string | null;
   pdf_path?: string | null;
   wordPath?: string | null;
@@ -90,10 +91,18 @@ export function resolveDocumentThumbnailPath(document: DocumentSurfaceItem) {
 }
 
 export function resolveDocumentPageCount(document: DocumentSurfaceItem) {
-  const pageCount = document.pageCount ?? document.page_count;
+  const explicitPageCount = document.pageCount ?? document.page_count;
 
-  if (typeof pageCount === 'number' && Number.isFinite(pageCount) && pageCount > 0) {
-    return pageCount;
+  if (
+    typeof explicitPageCount === 'number' &&
+    Number.isFinite(explicitPageCount) &&
+    explicitPageCount > 0
+  ) {
+    return explicitPageCount;
+  }
+
+  if (Array.isArray(document.pages) && document.pages.length > 0) {
+    return document.pages.length;
   }
 
   return 0;
