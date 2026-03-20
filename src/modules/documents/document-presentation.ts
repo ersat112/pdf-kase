@@ -45,6 +45,18 @@ export type DocumentHomeOverview<TDocument extends DocumentSurfaceItem> = {
   totalCount: number;
 };
 
+export type DocumentCollectionOverview<TDocument extends DocumentSurfaceItem> = {
+  sortedDocuments: TDocument[];
+  totalCount: number;
+  totalPages: number;
+  draftCount: number;
+  readyCount: number;
+  processingCount: number;
+  failedCount: number;
+  pdfReadyCount: number;
+  favoriteCount: number;
+};
+
 export function resolveDocumentTitle(document: DocumentSurfaceItem) {
   const title = document.title?.trim();
 
@@ -211,5 +223,30 @@ export function buildDocumentHomeOverview<TDocument extends DocumentSurfaceItem>
     pdfReadyCount: sorted.filter((item) => Boolean(resolveDocumentPdfPath(item))).length,
     favoriteCount: sorted.filter((item) => resolveDocumentIsFavorite(item)).length,
     totalCount: sorted.length,
+  };
+}
+
+export function buildDocumentCollectionOverview<TDocument extends DocumentSurfaceItem>(
+  documents: TDocument[],
+): DocumentCollectionOverview<TDocument> {
+  const sortedDocuments = sortDocumentsByUpdatedAt(documents);
+
+  return {
+    sortedDocuments,
+    totalCount: sortedDocuments.length,
+    totalPages: sortedDocuments.reduce(
+      (sum, item) => sum + resolveDocumentPageCount(item),
+      0,
+    ),
+    draftCount: sortedDocuments.filter((item) => item.status === 'draft').length,
+    readyCount: sortedDocuments.filter((item) => item.status === 'ready').length,
+    processingCount: sortedDocuments.filter(
+      (item) => resolveDocumentActionState(item) === 'processing',
+    ).length,
+    failedCount: sortedDocuments.filter(
+      (item) => resolveDocumentActionState(item) === 'failed',
+    ).length,
+    pdfReadyCount: sortedDocuments.filter((item) => Boolean(resolveDocumentPdfPath(item))).length,
+    favoriteCount: sortedDocuments.filter((item) => resolveDocumentIsFavorite(item)).length,
   };
 }

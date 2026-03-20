@@ -21,6 +21,16 @@ import {
 } from '../../modules/billing/billing-capabilities';
 import { logDocumentAuditEvent } from '../../modules/documents/document-audit.service';
 import {
+  buildDocumentCollectionOverview,
+  resolveDocumentActionState,
+  resolveDocumentIsFavorite,
+  resolveDocumentPageCount,
+  resolveDocumentPdfPath,
+  resolveDocumentStatusLabel,
+  resolveDocumentStatusTone,
+  resolveDocumentTitle,
+} from '../../modules/documents/document-presentation';
+import {
   addTagToDocuments,
   listDocumentCollections,
   listDocumentTags,
@@ -72,59 +82,6 @@ type BatchResult = {
   extraLine?: string | null;
 };
 
-function isFavorite(item: DocumentSummary) {
-  return item.is_favorite === 1;
-}
-
-function getStatusLabel(item: DocumentSummary) {
-  if (item.pdf_path && item.status === 'ready') {
-    return 'PDF Hazır';
-  }
-
-  if (item.ocr_status === 'processing') {
-    return 'OCR İşleniyor';
-  }
-
-  if (item.ocr_status === 'failed') {
-    return 'OCR Hata';
-  }
-
-  if (item.ocr_status === 'ready') {
-    return 'OCR Hazır';
-  }
-
-  switch (item.status) {
-    case 'draft':
-      return 'Taslak';
-    case 'ready':
-      return 'Hazır';
-    case 'exported':
-      return 'PDF Oluşturuldu';
-    default:
-      return item.status;
-  }
-}
-
-function getStatusTone(item: DocumentSummary) {
-  if (item.pdf_path && item.status === 'ready') {
-    return 'success' as const;
-  }
-
-  if (item.ocr_status === 'processing' || item.ocr_status === 'ready') {
-    return 'accent' as const;
-  }
-
-  if (item.ocr_status === 'failed') {
-    return 'danger' as const;
-  }
-
-  if (item.status === 'draft') {
-    return 'muted' as const;
-  }
-
-  return 'default' as const;
-}
-
 function formatDate(value: string) {
   const parsed = new Date(value);
 
@@ -141,6 +98,8 @@ function formatDate(value: string) {
 }
 
 function matchesFilter(item: DocumentSummary, filter: FilterKey) {
+  const actionState = resolveDocumentActionState(item);
+
   switch (filter) {
     case 'draft':
       return item.status === 'draft';
@@ -149,13 +108,13 @@ function matchesFilter(item: DocumentSummary, filter: FilterKey) {
     case 'ocr':
       return item.ocr_status === 'ready';
     case 'processing':
-      return item.ocr_status === 'processing';
+      return actionState === 'processing';
     case 'failed':
-      return item.ocr_status === 'failed';
+      return actionState === 'failed';
     case 'pdf':
-      return Boolean(item.pdf_path);
+      return Boolean(resolveDocumentPdfPath(item));
     case 'favorite':
-      return isFavorite(item);
+      return resolveDocumentIsFavorite(item);
     case 'all':
     default:
       return true;
@@ -326,7 +285,7 @@ function EmptyState({
 }
 
 function StatusBadge({ item }: { item: DocumentSummary }) {
-  const tone = getStatusTone(item);
+  const tone = resolveDocumentStatusTone(item);
 
   return (
     <View
@@ -347,7 +306,7 @@ function StatusBadge({ item }: { item: DocumentSummary }) {
           tone === 'danger' && styles.statusBadgeTextDanger,
         ]}
       >
-        {getStatusLabel(item)}
+        {resolveDocumentStatusLabel(item)}
       </Text>
     </View>
   );
@@ -378,7 +337,9 @@ function DocumentCard({
   onLongPress: () => void;
   onToggleFavorite: () => void;
 }) {
-  const favorite = isFavorite(item);
+  const favorite = resolveDocumentIsFavorite(item);
+  const title = resolveDocumentTitle(item);
+  const pageCount = resolveDocumentPageCount(item);
 
   return (
     <View style={styles.card}>
@@ -416,11 +377,11 @@ function DocumentCard({
           <View style={styles.cardTopRow}>
             <View style={styles.cardTitleWrap}>
               <Text numberOfLines={2} style={styles.cardTitle}>
-                {item.title}
+                {title}
               </Text>
 
               <View style={styles.cardMetaRow}>
-                <Text style={styles.cardMeta}>Sayfa: {item.page_count}</Text>
+                <Text style={styles.cardMeta}>Sayfa: {pageCount}</Text>
                 <Text style={styles.cardMetaDot}>•</Text>
                 <Text style={styles.cardMeta}>{formatDate(item.updated_at)}</Text>
               </View>
@@ -632,10 +593,15 @@ export function DocumentsScreen() {
 
   const selectionMode = selectedIds.length > 0;
 
+  const overview = useMemo(
+    () => buildDocumentCollectionOverview(documents),
+    [documents],
+  );
+
   const filteredDocuments = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase('tr-TR');
 
-    return [...documents]
+    return [...overview.sortedDocuments]
       .filter((item) => {
         if (!matchesFilter(item, filter)) {
           return false;
@@ -660,13 +626,13 @@ export function DocumentsScreen() {
         }
 
         const haystack = [
-          item.title,
+          resolveDocumentTitle(item),
           item.status,
           item.ocr_status,
-          getStatusLabel(item),
+          resolveDocumentStatusLabel(item),
           item.collection_name ?? '',
           ...item.tag_names,
-          isFavorite(item) ? 'favori' : '',
+          resolveDocumentIsFavorite(item) ? 'favori' : '',
           'local',
           'cihazda kalır',
         ]
@@ -676,7 +642,9 @@ export function DocumentsScreen() {
         return haystack.includes(normalizedQuery);
       })
       .sort((left, right) => {
-        const favoriteDelta = Number(isFavorite(right)) - Number(isFavorite(left));
+        const favoriteDelta =
+          Number(resolveDocumentIsFavorite(right)) -
+          Number(resolveDocumentIsFavorite(left));
 
         if (favoriteDelta !== 0) {
           return favoriteDelta;
@@ -684,61 +652,38 @@ export function DocumentsScreen() {
 
         return new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
       });
-  }, [documents, filter, query, selectedCollectionName, selectedTagName]);
-
-  const totalPages = useMemo(() => {
-    return documents.reduce((sum, item) => sum + item.page_count, 0);
-  }, [documents]);
-
-  const draftCount = useMemo(() => {
-    return documents.filter((item) => item.status === 'draft').length;
-  }, [documents]);
-
-  const readyCount = useMemo(() => {
-    return documents.filter((item) => item.status === 'ready').length;
-  }, [documents]);
-
-  const pdfCount = useMemo(() => {
-    return documents.filter((item) => Boolean(item.pdf_path)).length;
-  }, [documents]);
-
-  const favoriteCount = useMemo(() => {
-    return documents.filter((item) => isFavorite(item)).length;
-  }, [documents]);
-
-  const processingCount = useMemo(() => {
-    return documents.filter((item) => item.ocr_status === 'processing').length;
-  }, [documents]);
-
-  const failedOcrCount = useMemo(() => {
-    return documents.filter((item) => item.ocr_status === 'failed').length;
-  }, [documents]);
+  }, [filter, overview.sortedDocuments, query, selectedCollectionName, selectedTagName]);
 
   const selectedDocuments = useMemo(() => {
     return documents.filter((item) => selectedIds.includes(item.id));
   }, [documents, selectedIds]);
 
   const eligibleBatchDocuments = useMemo(() => {
-    return selectedDocuments.filter((item) => item.page_count > 0);
+    return selectedDocuments.filter((item) => resolveDocumentPageCount(item) > 0);
   }, [selectedDocuments]);
 
   const skippedBatchDocuments = useMemo(() => {
-    return selectedDocuments.filter((item) => item.page_count <= 0);
+    return selectedDocuments.filter((item) => resolveDocumentPageCount(item) <= 0);
   }, [selectedDocuments]);
 
   const retryableSelectedFailedDocuments = useMemo(() => {
     return selectedDocuments.filter(
-      (item) => item.page_count > 0 && item.ocr_status === 'failed',
+      (item) =>
+        resolveDocumentPageCount(item) > 0 &&
+        resolveDocumentActionState(item) === 'failed',
     );
   }, [selectedDocuments]);
 
   const failedVisibleDocuments = useMemo(() => {
     return filteredDocuments.filter(
-      (item) => item.page_count > 0 && item.ocr_status === 'failed',
+      (item) =>
+        resolveDocumentPageCount(item) > 0 &&
+        resolveDocumentActionState(item) === 'failed',
     );
   }, [filteredDocuments]);
 
-  const singleSelectedDocument = selectedDocuments.length === 1 ? selectedDocuments[0] : null;
+  const singleSelectedDocument =
+    selectedDocuments.length === 1 ? selectedDocuments[0] : null;
 
   const clearSelection = useCallback(() => {
     setSelectedIds([]);
@@ -802,7 +747,7 @@ export function DocumentsScreen() {
       }
 
       const failedTitles: string[] = [];
-      const skippedTitles = skippedDocuments.map((item) => item.title);
+      const skippedTitles = skippedDocuments.map((item) => resolveDocumentTitle(item));
       const retryDocumentIds: number[] = [];
       let succeededCount = 0;
       let failedCount = 0;
@@ -850,7 +795,7 @@ export function DocumentsScreen() {
             });
           } catch (error) {
             failedCount += 1;
-            failedTitles.push(item.title);
+            failedTitles.push(resolveDocumentTitle(item));
             retryDocumentIds.push(item.id);
 
             await logAuditSafely({
@@ -938,7 +883,7 @@ export function DocumentsScreen() {
       }
 
       const failedTitles: string[] = [];
-      const skippedTitles = skippedDocuments.map((item) => item.title);
+      const skippedTitles = skippedDocuments.map((item) => resolveDocumentTitle(item));
       const retryDocumentIds: number[] = [];
       let succeededCount = 0;
       let failedCount = 0;
@@ -974,7 +919,7 @@ export function DocumentsScreen() {
             const result = await exportDocumentToPdf(item.id);
             succeededCount += 1;
 
-            if (item.pdf_path) {
+            if (resolveDocumentPdfPath(item)) {
               reExportedCount += 1;
             }
 
@@ -986,12 +931,12 @@ export function DocumentsScreen() {
               metadata: {
                 fileName: result.fileName,
                 batch: true,
-                reExported: Boolean(item.pdf_path),
+                reExported: Boolean(resolveDocumentPdfPath(item)),
               },
             });
           } catch (error) {
             failedCount += 1;
-            failedTitles.push(item.title);
+            failedTitles.push(resolveDocumentTitle(item));
             retryDocumentIds.push(item.id);
 
             await logAuditSafely({
@@ -1069,7 +1014,7 @@ export function DocumentsScreen() {
       try {
         setBusy(true);
         setBusyLabel('Favori durumu güncelleniyor...');
-        await setDocumentFavorite(item.id, !isFavorite(item));
+        await setDocumentFavorite(item.id, !resolveDocumentIsFavorite(item));
         await loadDocuments();
       } catch (error) {
         Alert.alert(
@@ -1165,7 +1110,7 @@ export function DocumentsScreen() {
     }
 
     setRenameTargetId(singleSelectedDocument.id);
-    setRenameValue(singleSelectedDocument.title);
+    setRenameValue(resolveDocumentTitle(singleSelectedDocument));
   }, [singleSelectedDocument]);
 
   const handleCancelRename = useCallback(() => {
@@ -1288,16 +1233,24 @@ export function DocumentsScreen() {
 
     if (batchResult.key === 'ocr') {
       await runBatchOcr({
-        targetDocuments: retryDocuments.filter((item) => item.page_count > 0),
-        skippedDocuments: retryDocuments.filter((item) => item.page_count <= 0),
+        targetDocuments: retryDocuments.filter(
+          (item) => resolveDocumentPageCount(item) > 0,
+        ),
+        skippedDocuments: retryDocuments.filter(
+          (item) => resolveDocumentPageCount(item) <= 0,
+        ),
         title: 'Başarısız toplu OCR işlemlerini yeniden dene',
       });
       return;
     }
 
     await runBatchPdfExport({
-      targetDocuments: retryDocuments.filter((item) => item.page_count > 0),
-      skippedDocuments: retryDocuments.filter((item) => item.page_count <= 0),
+      targetDocuments: retryDocuments.filter(
+        (item) => resolveDocumentPageCount(item) > 0,
+      ),
+      skippedDocuments: retryDocuments.filter(
+        (item) => resolveDocumentPageCount(item) <= 0,
+      ),
       title: 'Başarısız toplu PDF işlemlerini yeniden dene',
     });
   }, [batchResult, documents, runBatchOcr, runBatchPdfExport]);
@@ -1446,13 +1399,13 @@ export function DocumentsScreen() {
       </View>
 
       <View style={styles.statsGrid}>
-        <StatCard label="Toplam belge" value={documents.length} icon="folder-open-outline" />
-        <StatCard label="Toplam sayfa" value={totalPages} icon="layers-outline" />
-        <StatCard label="Taslak" value={draftCount} icon="create-outline" />
-        <StatCard label="PDF hazır" value={pdfCount || readyCount} icon="document-outline" />
-        <StatCard label="İşleniyor" value={processingCount} icon="hourglass-outline" />
-        <StatCard label="OCR hata" value={failedOcrCount} icon="alert-circle-outline" />
-        <StatCard label="Favori" value={favoriteCount} icon="star-outline" />
+        <StatCard label="Toplam belge" value={overview.totalCount} icon="folder-open-outline" />
+        <StatCard label="Toplam sayfa" value={overview.totalPages} icon="layers-outline" />
+        <StatCard label="Taslak" value={overview.draftCount} icon="create-outline" />
+        <StatCard label="PDF hazır" value={overview.pdfReadyCount || overview.readyCount} icon="document-outline" />
+        <StatCard label="İşleniyor" value={overview.processingCount} icon="hourglass-outline" />
+        <StatCard label="OCR hata" value={overview.failedCount} icon="alert-circle-outline" />
+        <StatCard label="Favori" value={overview.favoriteCount} icon="star-outline" />
       </View>
 
       {!selectionMode && failedVisibleDocuments.length > 0 ? (
