@@ -21,6 +21,15 @@ import {
 } from '../../features/tools/tools.registry';
 import { useAdGate } from '../../hooks/useAdGate';
 import { resolveBillingCapabilities } from '../../modules/billing/billing-capabilities';
+import {
+  buildDocumentHomeOverview,
+  resolveDocumentPageCount,
+  resolveDocumentStatusLabel,
+  resolveDocumentThumbnailPath,
+  resolveDocumentTitle,
+  resolveDocumentUpdatedAt,
+  type DocumentSurfaceItem,
+} from '../../modules/documents/document-presentation';
 import { documentService } from '../../modules/documents/document.service';
 import type { AppTabScreenProps } from '../../navigation/types';
 import { useBillingStore } from '../../store/useBillingStore';
@@ -35,22 +44,7 @@ import {
 
 type Props = AppTabScreenProps<'HomeTab'>;
 
-type HomeDocument = {
-  id: number;
-  title?: string | null;
-  status?: string | null;
-  ocr_status?: string | null;
-  pageCount?: number | null;
-  page_count?: number | null;
-  pdfPath?: string | null;
-  pdf_path?: string | null;
-  thumbnailPath?: string | null;
-  thumbnail_path?: string | null;
-  createdAt?: string | null;
-  created_at?: string | null;
-  updatedAt?: string | null;
-  updated_at?: string | null;
-};
+type HomeDocument = DocumentSurfaceItem;
 
 type DocumentServiceShape = typeof documentService & {
   getLatestDocument?: () => Promise<HomeDocument | null>;
@@ -132,64 +126,6 @@ const SECONDARY_ACTIONS: HomeActionConfig[] = [
   },
 ];
 
-function resolveDocumentTitle(document: HomeDocument) {
-  const title = document.title?.trim();
-
-  if (title) {
-    return title;
-  }
-
-  return `Belge #${document.id}`;
-}
-
-function resolveDocumentUpdatedAt(document: HomeDocument) {
-  return (
-    document.updatedAt ??
-    document.updated_at ??
-    document.createdAt ??
-    document.created_at ??
-    null
-  );
-}
-
-function resolveDocumentPdfPath(document: HomeDocument) {
-  return document.pdfPath ?? document.pdf_path ?? null;
-}
-
-function resolveDocumentThumbnailPath(document: HomeDocument) {
-  return document.thumbnailPath ?? document.thumbnail_path ?? null;
-}
-
-function resolveDocumentPageCount(document: HomeDocument) {
-  const pageCount = document.pageCount ?? document.page_count;
-
-  if (typeof pageCount === 'number' && Number.isFinite(pageCount) && pageCount > 0) {
-    return pageCount;
-  }
-
-  return 0;
-}
-
-function resolveDocumentStatus(document: HomeDocument) {
-  if (document.status === 'draft') {
-    return 'Taslak';
-  }
-
-  if (document.status === 'ready' && document.ocr_status === 'ready') {
-    return 'OCR Hazır';
-  }
-
-  if (document.status === 'ready' && resolveDocumentPdfPath(document)) {
-    return 'PDF Hazır';
-  }
-
-  if (document.status === 'ready') {
-    return 'Hazır';
-  }
-
-  return 'Belge';
-}
-
 function formatDocumentDate(value: string | null) {
   if (!value) {
     return 'Tarih yok';
@@ -244,15 +180,6 @@ async function resolveDocuments(service: DocumentServiceShape) {
   }
 
   return [];
-}
-
-function sortDocuments(list: HomeDocument[]) {
-  return [...list].sort((left, right) => {
-    const leftTime = new Date(resolveDocumentUpdatedAt(left) ?? 0).getTime();
-    const rightTime = new Date(resolveDocumentUpdatedAt(right) ?? 0).getTime();
-
-    return rightTime - leftTime;
-  });
 }
 
 function PrimaryActionCard({
@@ -323,6 +250,36 @@ function SecondaryToolCard({
   );
 }
 
+function SummaryChip({
+  label,
+  tone = 'default',
+}: {
+  label: string;
+  tone?: 'default' | 'success' | 'accent' | 'warning';
+}) {
+  return (
+    <View
+      style={[
+        styles.summaryChip,
+        tone === 'success' && styles.summaryChipSuccess,
+        tone === 'accent' && styles.summaryChipAccent,
+        tone === 'warning' && styles.summaryChipWarning,
+      ]}
+    >
+      <Text
+        style={[
+          styles.summaryChipText,
+          tone === 'success' && styles.summaryChipTextSuccess,
+          tone === 'accent' && styles.summaryChipTextAccent,
+          tone === 'warning' && styles.summaryChipTextWarning,
+        ]}
+      >
+        {label}
+      </Text>
+    </View>
+  );
+}
+
 function ContinueDocumentCard({
   document,
   onPress,
@@ -371,7 +328,7 @@ function ContinueDocumentCard({
   }
 
   const title = resolveDocumentTitle(document);
-  const status = resolveDocumentStatus(document);
+  const status = resolveDocumentStatusLabel(document);
   const updatedAt = formatDocumentDate(resolveDocumentUpdatedAt(document));
   const pageCount = resolveDocumentPageCount(document);
   const thumbnailPath = resolveDocumentThumbnailPath(document);
@@ -446,6 +403,62 @@ function ContinueDocumentCard({
   );
 }
 
+function RecoverySummaryCard({
+  processingCount,
+  failedCount,
+  pdfReadyCount,
+  favoriteCount,
+  onOpenDocuments,
+}: {
+  processingCount: number;
+  failedCount: number;
+  pdfReadyCount: number;
+  favoriteCount: number;
+  onOpenDocuments: () => void;
+}) {
+  return (
+    <View style={styles.recoveryCard}>
+      <View style={styles.recoveryHeaderRow}>
+        <View style={styles.recoveryIconWrap}>
+          <Ionicons name="pulse-outline" size={18} color={colors.primary} />
+        </View>
+
+        <View style={styles.recoveryTextWrap}>
+          <Text style={styles.recoveryTitle}>Belge işlem özeti</Text>
+          <Text style={styles.recoverySubtitle}>
+            OCR, export ve recovery görünürlüğü tek yerden takip ediliyor.
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.recoveryChipRow}>
+        <SummaryChip label={`${processingCount} işleniyor`} tone="accent" />
+        <SummaryChip label={`${failedCount} hata`} tone="warning" />
+        <SummaryChip label={`${pdfReadyCount} PDF hazır`} tone="success" />
+        <SummaryChip label={`${favoriteCount} favori`} tone="default" />
+      </View>
+
+      <Text style={styles.recoveryText}>
+        {failedCount > 0
+          ? 'Başarısız OCR kayıtları için belge merkezinden retry akışına geç.'
+          : processingCount > 0
+          ? 'Devam eden OCR işlemleri belge merkezinde canlı durum kartlarıyla görünür.'
+          : 'Belge pipeline temiz durumda. Yeni işleme başlayabilir veya son belgeye dönebilirsin.'}
+      </Text>
+
+      <Pressable
+        onPress={onOpenDocuments}
+        style={({ pressed }) => [
+          styles.recoveryButton,
+          pressed && styles.pressed,
+        ]}
+      >
+        <Text style={styles.recoveryButtonText}>Belge merkezini aç</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 function RecentDocumentMiniCard({
   document,
   onPress,
@@ -454,7 +467,7 @@ function RecentDocumentMiniCard({
   onPress: () => void;
 }) {
   const title = resolveDocumentTitle(document);
-  const status = resolveDocumentStatus(document);
+  const status = resolveDocumentStatusLabel(document);
   const thumbnailPath = resolveDocumentThumbnailPath(document);
 
   return (
@@ -529,7 +542,7 @@ export function HomeScreen({ navigation }: Props) {
             return;
           }
 
-          setDocuments(sortDocuments(list));
+          setDocuments(list);
         } catch (error) {
           console.warn('[HomeScreen] Failed to load documents:', error);
 
@@ -551,8 +564,9 @@ export function HomeScreen({ navigation }: Props) {
     }, [preloadInterstitial]),
   );
 
-  const latestDocument = documents[0] ?? null;
-  const recentDocuments = documents.slice(0, 8);
+  const overview = useMemo(() => buildDocumentHomeOverview(documents), [documents]);
+  const latestDocument = overview.latestDocument;
+  const recentDocuments = overview.recentDocuments;
 
   const primaryActions = useMemo(() => {
     return homePrimaryActionKeys
@@ -604,7 +618,7 @@ export function HomeScreen({ navigation }: Props) {
 
   const documentCountLabel = loading
     ? 'Belgeler hazırlanıyor'
-    : `${documents.length} belge`;
+    : `${overview.totalCount} belge`;
 
   return (
     <View style={styles.container}>
@@ -647,6 +661,16 @@ export function HomeScreen({ navigation }: Props) {
           />
         )}
 
+        {!loading ? (
+          <RecoverySummaryCard
+            processingCount={overview.processingCount}
+            failedCount={overview.failedCount}
+            pdfReadyCount={overview.pdfReadyCount}
+            favoriteCount={overview.favoriteCount}
+            onOpenDocuments={handleOpenDocuments}
+          />
+        ) : null}
+
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Hızlı giriş</Text>
           <Text style={styles.sectionHint}>En çok kullanılan 4 işlem</Text>
@@ -666,7 +690,12 @@ export function HomeScreen({ navigation }: Props) {
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Son belgeler</Text>
-          <Text style={styles.sectionHint}>{documentCountLabel}</Text>
+          <Text style={styles.sectionHint}>
+            {documentCountLabel}
+            {!loading && overview.processingCount > 0
+              ? ` • ${overview.processingCount} işleniyor`
+              : ''}
+          </Text>
         </View>
 
         {loading ? (
@@ -924,6 +953,100 @@ const styles = StyleSheet.create({
   continueSecondaryButtonText: {
     color: colors.text,
     fontWeight: '700',
+    fontSize: 14,
+  },
+  recoveryCard: {
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    padding: Spacing.lg,
+    gap: Spacing.md,
+    ...Shadows.sm,
+  },
+  recoveryHeaderRow: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    alignItems: 'flex-start',
+  },
+  recoveryIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recoveryTextWrap: {
+    flex: 1,
+    gap: 4,
+  },
+  recoveryTitle: {
+    ...Typography.titleSmall,
+    color: colors.text,
+  },
+  recoverySubtitle: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
+  },
+  recoveryChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  summaryChip: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+  },
+  summaryChipSuccess: {
+    backgroundColor: 'rgba(53, 199, 111, 0.12)',
+    borderColor: 'rgba(53, 199, 111, 0.28)',
+  },
+  summaryChipAccent: {
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+    borderColor: 'rgba(59, 130, 246, 0.28)',
+  },
+  summaryChipWarning: {
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderColor: 'rgba(245, 158, 11, 0.24)',
+  },
+  summaryChipText: {
+    ...Typography.caption,
+    color: colors.textSecondary,
+    fontWeight: '800',
+  },
+  summaryChipTextSuccess: {
+    color: colors.primary,
+  },
+  summaryChipTextAccent: {
+    color: '#60A5FA',
+  },
+  summaryChipTextWarning: {
+    color: '#FBBF24',
+  },
+  recoveryText: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
+  },
+  recoveryButton: {
+    minHeight: 42,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.md,
+  },
+  recoveryButtonText: {
+    color: colors.text,
+    fontWeight: '800',
     fontSize: 14,
   },
   sectionHeader: {
