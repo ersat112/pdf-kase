@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 
 import { Screen } from '../../components/common/Screen';
+import { DocumentPipelineSummaryCard } from '../../components/documents/DocumentPipelineSummaryCard';
 import { LocalTrustBadge } from '../../components/trust/LocalTrustBadge';
 import {
   getPremiumGateMessage,
@@ -1409,44 +1410,46 @@ export function DocumentsScreen() {
       </View>
 
       {!selectionMode && failedVisibleDocuments.length > 0 ? (
-        <View style={styles.recoveryCard}>
-          <View style={styles.recoveryHeader}>
-            <View style={styles.recoveryIconWrap}>
-              <Ionicons name="refresh-outline" size={18} color="#FBBF24" />
-            </View>
-            <View style={styles.recoveryTextWrap}>
-              <Text style={styles.recoveryTitle}>Başarısız OCR kayıtları var</Text>
-              <Text style={styles.recoveryText}>
-                Bu filtrede {failedVisibleDocuments.length} belge OCR hatası verdi.
-                İstersen seçip toplu tekrar deneyebilirsin.
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.recoveryActions}>
-            <Pressable
-              onPress={handleSelectFailedVisibleDocuments}
-              style={({ pressed }) => [
-                styles.secondaryButtonCompact,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text style={styles.secondaryButtonCompactText}>Başarısızları seç</Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => void handleRetryFailedVisibleOcr()}
-              disabled={busy}
-              style={({ pressed }) => [
-                styles.primaryButtonCompact,
-                pressed && !busy && styles.pressed,
-                busy && styles.selectionActionButtonDisabled,
-              ]}
-            >
-              <Text style={styles.primaryButtonCompactText}>Tekrar dene</Text>
-            </Pressable>
-          </View>
-        </View>
+        <DocumentPipelineSummaryCard
+          title="OCR recovery"
+          subtitle="Başarısız belge işlemleri bu ekrandan toplu toparlanabilir."
+          message={`Bu filtrede ${failedVisibleDocuments.length} belge OCR hatası verdi. İstersen seçim moduna alıp toplu tekrar deneyebilirsin.`}
+          tone="warning"
+          icon="refresh-outline"
+          stats={[
+            {
+              label: `${failedVisibleDocuments.length} hata`,
+              tone: 'warning',
+              icon: 'alert-circle-outline',
+            },
+            {
+              label: `${overview.processingCount} işleniyor`,
+              tone: overview.processingCount > 0 ? 'accent' : 'muted',
+              icon: 'hourglass-outline',
+            },
+            {
+              label: `${filteredDocuments.length} görünür`,
+              tone: 'default',
+              icon: 'documents-outline',
+            },
+          ]}
+          actions={[
+            {
+              label: 'Başarısızları seç',
+              onPress: handleSelectFailedVisibleDocuments,
+              variant: 'secondary',
+              disabled: busy,
+            },
+            {
+              label: 'Tekrar dene',
+              onPress: () => {
+                void handleRetryFailedVisibleOcr();
+              },
+              variant: 'primary',
+              disabled: busy,
+            },
+          ]}
+        />
       ) : null}
 
       {batchResult ? (

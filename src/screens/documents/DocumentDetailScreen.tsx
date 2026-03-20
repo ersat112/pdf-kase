@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 
 import { Screen } from '../../components/common/Screen';
+import { DocumentPipelineSummaryCard } from '../../components/documents/DocumentPipelineSummaryCard';
 import { LocalTrustBadge } from '../../components/trust/LocalTrustBadge';
 import {
   getBillingPlanLabel,
@@ -344,6 +345,7 @@ export function DocumentDetailScreen({
   const documentThumbnailPath = document
     ? resolveDocumentThumbnailPath(document)
     : null;
+
 
   const pdfActionLabel = documentPdfPath
     ? 'PDF yeniden üret'
@@ -698,6 +700,164 @@ export function DocumentDetailScreen({
     });
   }, [document, hasPageBasedDocument, runAuditedAction]);
 
+  const pipelineSummary = useMemo(() => {
+    if (!document) {
+      return null;
+    }
+
+    const stats = [
+      {
+        label: resolveDocumentStatusLabel(document),
+        tone: statusTone,
+        icon: 'pulse-outline' as const,
+      },
+      {
+        label: hasPageBasedDocument ? `${pageCount} sayfa` : 'Sayfa tabanlı değil',
+        tone: hasPageBasedDocument ? 'default' : 'muted',
+        icon: 'layers-outline' as const,
+      },
+      {
+        label: documentPdfPath ? 'PDF hazır' : 'PDF yok',
+        tone: documentPdfPath ? 'success' : 'muted',
+        icon: 'document-outline' as const,
+      },
+      {
+        label: documentWordPath ? 'Word hazır' : 'Word yok',
+        tone: documentWordPath ? 'accent' : 'muted',
+        icon: 'document-text-outline' as const,
+      },
+    ];
+
+    if (!hasPageBasedDocument) {
+      return {
+        title: 'İçe aktarılan PDF',
+        subtitle: 'Bu kayıt sayfa tabanlı belge akışına henüz girmiyor.',
+        message:
+          'OCR, editör ve yeniden export v1 akışı için sayfa tabanlı belge gerekiyor.',
+        tone: 'muted' as const,
+        icon: 'information-circle-outline' as const,
+        stats,
+        actions: [
+          {
+            label: 'Belgelerim',
+            onPress: () => navigation.navigate('Documents'),
+            variant: 'secondary' as const,
+            disabled: activeActionKey !== null,
+          },
+        ],
+      };
+    }
+
+    if (document.ocr_status === 'failed') {
+      return {
+        title: 'OCR recovery gerekli',
+        subtitle: 'Belge iş akışı hata verdi, aynı kayıttan tekrar deneyebilirsin.',
+        message:
+          document.ocr_error?.trim() ||
+          'OCR işlemi tamamlanamadı. Düzenleme sonrası yeniden deneyebilirsin.',
+        tone: 'warning' as const,
+        icon: 'refresh-outline' as const,
+        stats,
+        actions: [
+          {
+            label: 'Editörde aç',
+            onPress: handleOpenEditor,
+            variant: 'secondary' as const,
+            disabled: activeActionKey !== null,
+          },
+          {
+            label: 'OCR tekrar dene',
+            onPress: () => {
+              void handleRunOcr();
+            },
+            variant: 'primary' as const,
+            disabled: activeActionKey !== null,
+          },
+        ],
+      };
+    }
+
+    if (document.ocr_status === 'processing') {
+      return {
+        title: 'Belge işleniyor',
+        subtitle: 'OCR pipeline çalışıyor.',
+        message:
+          'İşlem tamamlandığında OCR metni ve export yüzeyleri bu ekranda güncellenecek.',
+        tone: 'accent' as const,
+        icon: 'hourglass-outline' as const,
+        stats,
+        actions: [],
+      };
+    }
+
+    if (
+      documentPdfPath ||
+      documentWordPath ||
+      document.ocr_status === 'ready' ||
+      document.status === 'ready'
+    ) {
+      return {
+        title: 'Belge hazır',
+        subtitle: 'Düzenleme, OCR, çeviri ve export yüzeyleri aktif.',
+        message: documentPdfPath
+          ? 'PDF çıktısı hazır. Gerekirse yeniden üretip Word / Excel veya paylaşma akışına devam edebilirsin.'
+          : document.ocr_status === 'ready'
+            ? 'OCR metni hazır. Çeviri veya export adımına geçebilirsin.'
+            : 'Belge düzenleme ve export için hazır durumda.',
+        tone: documentPdfPath ? 'success' : statusTone,
+        icon: documentPdfPath
+          ? ('checkmark-circle-outline' as const)
+          : ('sparkles-outline' as const),
+        stats,
+        actions: [
+          {
+            label: 'Editörde aç',
+            onPress: handleOpenEditor,
+            variant: 'secondary' as const,
+            disabled: activeActionKey !== null,
+          },
+        ],
+      };
+    }
+
+    return {
+      title: 'Belge taslak durumda',
+      subtitle: 'Akış henüz tamamlanmadı.',
+      message:
+        'Editörde açabilir, OCR başlatabilir ve ardından export akışına geçebilirsin.',
+      tone: 'default' as const,
+      icon: 'document-text-outline' as const,
+      stats,
+      actions: [
+        {
+          label: 'Editörde aç',
+          onPress: handleOpenEditor,
+          variant: 'secondary' as const,
+          disabled: activeActionKey !== null,
+        },
+        {
+          label: 'OCR çıkar',
+          onPress: () => {
+            void handleRunOcr();
+          },
+          variant: 'primary' as const,
+          disabled: activeActionKey !== null,
+        },
+      ],
+    };
+  }, [
+    activeActionKey,
+    document,
+    documentPdfPath,
+    documentWordPath,
+    handleOpenEditor,
+    handleRunOcr,
+    hasPageBasedDocument,
+    navigation,
+    pageCount,
+    statusTone,
+  ]);
+
   return (
     <Screen
       title="Belge Detayı"
@@ -820,27 +980,19 @@ export function DocumentDetailScreen({
             </View>
 
             <LocalTrustBadge />
-
-            {!hasPageBasedDocument ? (
-              <View style={styles.noticeCard}>
-                <View style={styles.noticeIconWrap}>
-                  <Ionicons
-                    name="information-circle-outline"
-                    size={18}
-                    color="#60A5FA"
-                  />
-                </View>
-                <View style={styles.noticeTextWrap}>
-                  <Text style={styles.noticeTitle}>Dışarıdan PDF kayıt</Text>
-                  <Text style={styles.noticeText}>
-                    Bu kayıt dışarıdan PDF olarak içe aktarılmış. Sayfa bazlı
-                    düzenleme, OCR ve yeniden export v1 akışı için sayfa tabanlı
-                    belge gerekiyor.
-                  </Text>
-                </View>
-              </View>
-            ) : null}
           </View>
+
+          {pipelineSummary ? (
+            <DocumentPipelineSummaryCard
+              title={pipelineSummary.title}
+              subtitle={pipelineSummary.subtitle}
+              message={pipelineSummary.message}
+              tone={pipelineSummary.tone}
+              icon={pipelineSummary.icon}
+              stats={pipelineSummary.stats}
+              actions={pipelineSummary.actions}
+            />
+          ) : null}
 
           <View style={styles.planCard}>
             <View style={styles.planHeader}>
@@ -1025,16 +1177,6 @@ export function DocumentDetailScreen({
               )}
             </View>
           </View>
-
-          {document.ocr_status === 'failed' && document.ocr_error ? (
-            <View style={styles.resultCard}>
-              <View style={styles.resultHeader}>
-                <Text style={styles.resultTitle}>OCR hatası</Text>
-                <InfoBadge label="Hata" tone="danger" />
-              </View>
-              <Text style={styles.resultText}>{document.ocr_error}</Text>
-            </View>
-          ) : null}
 
           {document.ocr_text ? (
             <View style={styles.resultCard}>
