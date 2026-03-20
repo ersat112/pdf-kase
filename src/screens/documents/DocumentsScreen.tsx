@@ -14,6 +14,15 @@ import {
 } from 'react-native';
 
 import { Screen } from '../../components/common/Screen';
+import { LocalTrustBadge } from '../../components/trust/LocalTrustBadge';
+import {
+  addTagToDocuments,
+  listDocumentCollections,
+  listDocumentTags,
+  setDocumentsCollection,
+  type DocumentCollectionSummary,
+  type DocumentTagSummary,
+} from '../../modules/documents/document-taxonomy.service';
 import {
   getRecentDocuments,
   mergeDocuments,
@@ -128,6 +137,36 @@ function FilterChip({
         style={[
           styles.filterChipText,
           selected && styles.filterChipTextSelected,
+        ]}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function TaxonomyChip({
+  label,
+  selected,
+  onPress,
+}: {
+  label: string;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.taxonomyChip,
+        selected && styles.taxonomyChipSelected,
+        pressed && styles.pressed,
+      ]}
+    >
+      <Text
+        style={[
+          styles.taxonomyChipText,
+          selected && styles.taxonomyChipTextSelected,
         ]}
       >
         {label}
@@ -323,6 +362,24 @@ function DocumentCard({
               </View>
             ) : null}
 
+            <View style={styles.inlineMiniBadge}>
+              <Text style={styles.inlineMiniBadgeText}>LOCAL</Text>
+            </View>
+
+            {item.collection_name ? (
+              <View style={styles.inlineMiniBadge}>
+                <Text style={styles.inlineMiniBadgeText}>
+                  {item.collection_name}
+                </Text>
+              </View>
+            ) : null}
+
+            {item.tag_names.slice(0, 2).map((tag) => (
+              <View key={tag} style={styles.inlineMiniBadge}>
+                <Text style={styles.inlineMiniBadgeText}>#{tag}</Text>
+              </View>
+            ))}
+
             {item.word_path ? (
               <View style={styles.inlineMiniBadge}>
                 <Text style={styles.inlineMiniBadgeText}>WORD</Text>
@@ -404,22 +461,38 @@ export function DocumentsScreen() {
   const navigation = useNavigation<any>();
 
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
+  const [collections, setCollections] = useState<DocumentCollectionSummary[]>([]);
+  const [tags, setTags] = useState<DocumentTagSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<FilterKey>('all');
+  const [selectedCollectionName, setSelectedCollectionName] = useState<string | null>(null);
+  const [selectedTagName, setSelectedTagName] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [renameTargetId, setRenameTargetId] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [collectionInput, setCollectionInput] = useState('');
+  const [tagInput, setTagInput] = useState('');
 
   const loadDocuments = useCallback(async () => {
     try {
       setLoading(true);
-      const rows = await getRecentDocuments(100);
-      setDocuments(rows);
+
+      const [documentRows, collectionRows, tagRows] = await Promise.all([
+        getRecentDocuments(100),
+        listDocumentCollections(),
+        listDocumentTags(),
+      ]);
+
+      setDocuments(documentRows);
+      setCollections(collectionRows);
+      setTags(tagRows);
     } catch (error) {
       console.warn('[Documents] Load failed:', error);
       setDocuments([]);
+      setCollections([]);
+      setTags([]);
     } finally {
       setLoading(false);
     }
@@ -443,7 +516,21 @@ export function DocumentsScreen() {
       setRenameTargetId(null);
       setRenameValue('');
     }
-  }, [documents, renameTargetId]);
+
+    if (
+      selectedCollectionName &&
+      !collections.some((item) => item.name === selectedCollectionName)
+    ) {
+      setSelectedCollectionName(null);
+    }
+
+    if (
+      selectedTagName &&
+      !tags.some((item) => item.name === selectedTagName)
+    ) {
+      setSelectedTagName(null);
+    }
+  }, [collections, documents, renameTargetId, selectedCollectionName, selectedTagName, tags]);
 
   const selectionMode = selectedIds.length > 0;
 
@@ -456,6 +543,20 @@ export function DocumentsScreen() {
           return false;
         }
 
+        if (
+          selectedCollectionName &&
+          item.collection_name !== selectedCollectionName
+        ) {
+          return false;
+        }
+
+        if (
+          selectedTagName &&
+          !item.tag_names.some((tag) => tag === selectedTagName)
+        ) {
+          return false;
+        }
+
         if (!normalizedQuery) {
           return true;
         }
@@ -465,7 +566,11 @@ export function DocumentsScreen() {
           item.status,
           item.ocr_status,
           getStatusLabel(item),
+          item.collection_name ?? '',
+          ...item.tag_names,
           isFavorite(item) ? 'favori' : '',
+          'local',
+          'cihazda kalır',
         ]
           .join(' ')
           .toLocaleLowerCase('tr-TR');
@@ -481,7 +586,7 @@ export function DocumentsScreen() {
 
         return new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
       });
-  }, [documents, filter, query]);
+  }, [documents, filter, query, selectedCollectionName, selectedTagName]);
 
   const totalPages = useMemo(() => {
     return documents.reduce((sum, item) => sum + item.page_count, 0);
@@ -513,6 +618,8 @@ export function DocumentsScreen() {
     setSelectedIds([]);
     setRenameTargetId(null);
     setRenameValue('');
+    setCollectionInput('');
+    setTagInput('');
   }, []);
 
   const toggleSelectedId = useCallback((documentId: number) => {
@@ -585,6 +692,52 @@ export function DocumentsScreen() {
       }
     },
     [clearSelection, loadDocuments, selectedIds],
+  );
+
+  const handleAssignCollection = useCallback(
+    async (collectionName: string | null) => {
+      if (!selectedIds.length) {
+        return;
+      }
+
+      try {
+        setBusy(true);
+        await setDocumentsCollection(selectedIds, collectionName);
+        await loadDocuments();
+        setCollectionInput('');
+      } catch (error) {
+        Alert.alert(
+          'Hata',
+          error instanceof Error ? error.message : 'Klasör atama başarısız.',
+        );
+      } finally {
+        setBusy(false);
+      }
+    },
+    [loadDocuments, selectedIds],
+  );
+
+  const handleAddTag = useCallback(
+    async (tagName: string) => {
+      if (!selectedIds.length) {
+        return;
+      }
+
+      try {
+        setBusy(true);
+        await addTagToDocuments(selectedIds, tagName);
+        await loadDocuments();
+        setTagInput('');
+      } catch (error) {
+        Alert.alert(
+          'Hata',
+          error instanceof Error ? error.message : 'Etiket eklenemedi.',
+        );
+      } finally {
+        setBusy(false);
+      }
+    },
+    [loadDocuments, selectedIds],
   );
 
   const handleOpenRename = useCallback(() => {
@@ -678,6 +831,8 @@ export function DocumentsScreen() {
           </Pressable>
         </View>
 
+        <LocalTrustBadge />
+
         <View style={styles.searchWrap}>
           <Ionicons
             name="search-outline"
@@ -725,6 +880,56 @@ export function DocumentsScreen() {
             onPress={() => setFilter('favorite')}
           />
         </View>
+
+        {collections.length > 0 ? (
+          <View style={styles.taxonomySection}>
+            <Text style={styles.taxonomyLabel}>Klasör filtresi</Text>
+            <View style={styles.taxonomyRow}>
+              <TaxonomyChip
+                label="Tümü"
+                selected={selectedCollectionName === null}
+                onPress={() => setSelectedCollectionName(null)}
+              />
+              {collections.map((item) => (
+                <TaxonomyChip
+                  key={item.id}
+                  label={item.name}
+                  selected={selectedCollectionName === item.name}
+                  onPress={() =>
+                    setSelectedCollectionName((current) =>
+                      current === item.name ? null : item.name,
+                    )
+                  }
+                />
+              ))}
+            </View>
+          </View>
+        ) : null}
+
+        {tags.length > 0 ? (
+          <View style={styles.taxonomySection}>
+            <Text style={styles.taxonomyLabel}>Etiket filtresi</Text>
+            <View style={styles.taxonomyRow}>
+              <TaxonomyChip
+                label="Tümü"
+                selected={selectedTagName === null}
+                onPress={() => setSelectedTagName(null)}
+              />
+              {tags.slice(0, 10).map((item) => (
+                <TaxonomyChip
+                  key={item.id}
+                  label={`#${item.name}`}
+                  selected={selectedTagName === item.name}
+                  onPress={() =>
+                    setSelectedTagName((current) =>
+                      current === item.name ? null : item.name,
+                    )
+                  }
+                />
+              ))}
+            </View>
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.statsGrid}>
@@ -811,6 +1016,87 @@ export function DocumentsScreen() {
               <Ionicons name="close-outline" size={16} color={colors.textSecondary} />
               <Text style={styles.selectionActionButtonText}>Vazgeç</Text>
             </Pressable>
+          </View>
+
+          <View style={styles.taxonomyManagerCard}>
+            <Text style={styles.taxonomyManagerTitle}>Klasör ata</Text>
+
+            <View style={styles.taxonomyInputRow}>
+              <TextInput
+                value={collectionInput}
+                onChangeText={setCollectionInput}
+                placeholder="Yeni klasör adı"
+                placeholderTextColor={colors.textTertiary}
+                style={styles.taxonomyInput}
+                maxLength={48}
+              />
+
+              <Pressable
+                onPress={() => void handleAssignCollection(collectionInput)}
+                disabled={busy}
+                style={({ pressed }) => [
+                  styles.taxonomyActionButton,
+                  pressed && !busy && styles.pressed,
+                  busy && styles.selectionActionButtonDisabled,
+                ]}
+              >
+                <Text style={styles.taxonomyActionButtonText}>Ata</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.taxonomyRow}>
+              {collections.map((item) => (
+                <TaxonomyChip
+                  key={item.id}
+                  label={item.name}
+                  selected={false}
+                  onPress={() => void handleAssignCollection(item.name)}
+                />
+              ))}
+              <TaxonomyChip
+                label="Klasörü temizle"
+                selected={false}
+                onPress={() => void handleAssignCollection(null)}
+              />
+            </View>
+          </View>
+
+          <View style={styles.taxonomyManagerCard}>
+            <Text style={styles.taxonomyManagerTitle}>Etiket ekle</Text>
+
+            <View style={styles.taxonomyInputRow}>
+              <TextInput
+                value={tagInput}
+                onChangeText={setTagInput}
+                placeholder="Yeni etiket"
+                placeholderTextColor={colors.textTertiary}
+                style={styles.taxonomyInput}
+                maxLength={48}
+              />
+
+              <Pressable
+                onPress={() => void handleAddTag(tagInput)}
+                disabled={busy}
+                style={({ pressed }) => [
+                  styles.taxonomyActionButton,
+                  pressed && !busy && styles.pressed,
+                  busy && styles.selectionActionButtonDisabled,
+                ]}
+              >
+                <Text style={styles.taxonomyActionButtonText}>Ekle</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.taxonomyRow}>
+              {tags.slice(0, 10).map((item) => (
+                <TaxonomyChip
+                  key={item.id}
+                  label={`#${item.name}`}
+                  selected={false}
+                  onPress={() => void handleAddTag(item.name)}
+                />
+              ))}
+            </View>
           </View>
         </View>
       ) : null}
@@ -954,6 +1240,41 @@ const styles = StyleSheet.create({
   filterChipTextSelected: {
     color: colors.onPrimary,
   },
+  taxonomySection: {
+    gap: Spacing.sm,
+  },
+  taxonomyLabel: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    fontWeight: '800',
+  },
+  taxonomyRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+  },
+  taxonomyChip: {
+    minHeight: 32,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+    paddingHorizontal: Spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  taxonomyChipSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.surfaceElevated,
+  },
+  taxonomyChipText: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    fontWeight: '700',
+  },
+  taxonomyChipTextSelected: {
+    color: colors.primary,
+  },
   statsGrid: {
     gap: Spacing.sm,
     marginBottom: Spacing.lg,
@@ -1031,6 +1352,48 @@ const styles = StyleSheet.create({
   selectionActionButtonText: {
     color: colors.text,
     fontWeight: '700',
+    fontSize: 14,
+  },
+  taxonomyManagerCard: {
+    gap: Spacing.sm,
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+  },
+  taxonomyManagerTitle: {
+    ...Typography.bodySmall,
+    color: colors.text,
+    fontWeight: '800',
+  },
+  taxonomyInputRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    alignItems: 'center',
+  },
+  taxonomyInput: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    color: colors.text,
+    paddingHorizontal: Spacing.md,
+    ...Typography.body,
+  },
+  taxonomyActionButton: {
+    minHeight: 44,
+    borderRadius: Radius.lg,
+    backgroundColor: colors.primary,
+    paddingHorizontal: Spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  taxonomyActionButtonText: {
+    color: colors.onPrimary,
+    fontWeight: '800',
     fontSize: 14,
   },
   sectionHeader: {

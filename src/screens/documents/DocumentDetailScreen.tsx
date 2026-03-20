@@ -1,4 +1,4 @@
-// src/screens/documents/DocumentsScreen.tsx
+// src/screens/documents/DocumentScreen.tsx
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -452,7 +452,7 @@ function DocumentCard({
   );
 }
 
-export function DocumentsScreen() {
+export function DocumentScreen() {
   const navigation = useNavigation<any>();
 
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);

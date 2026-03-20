@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 
 import { BannerStrip } from '../../components/ads/BannerStrip';
+import { LocalTrustBadge } from '../../components/trust/LocalTrustBadge';
 import { executeToolPrimaryAction } from '../../features/tools/tools.actions';
 import {
   findToolByKey,
@@ -629,6 +630,8 @@ export function HomeScreen({ navigation }: Props) {
             <Ionicons name="folder-open-outline" size={18} color={colors.text} />
             <Text style={styles.heroLibraryButtonText}>Belgelerim</Text>
           </Pressable>
+
+          <LocalTrustBadge compact />
         </View>
 
         {loading ? (
