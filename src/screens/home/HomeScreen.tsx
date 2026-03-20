@@ -24,6 +24,7 @@ import { useAdGate } from '../../hooks/useAdGate';
 import { resolveBillingCapabilities } from '../../modules/billing/billing-capabilities';
 import {
   buildDocumentHomeOverview,
+  buildHomeDocumentPipelineSummary,
   resolveDocumentPageCount,
   resolveDocumentStatusLabel,
   resolveDocumentThumbnailPath,
@@ -535,19 +536,12 @@ export function HomeScreen({ navigation }: Props) {
     ? 'Belgeler hazırlanıyor'
     : `${overview.totalCount} belge`;
 
-  const summaryTone =
-    overview.failedCount > 0
-      ? 'warning'
-      : overview.processingCount > 0
-        ? 'accent'
-        : 'default';
-
-  const summaryMessage =
-    overview.failedCount > 0
-      ? 'Başarısız OCR kayıtları için belge merkezinden retry akışına geç.'
-      : overview.processingCount > 0
-        ? 'Devam eden OCR işlemleri belge merkezinde canlı durum kartlarıyla görünür.'
-        : 'Belge pipeline temiz durumda. Yeni işleme başlayabilir veya son belgeye dönebilirsin.';
+  const summaryCard = useMemo(
+    () => buildHomeDocumentPipelineSummary(overview, {
+      onOpenDocuments: handleOpenDocuments,
+    }),
+    [handleOpenDocuments, overview],
+  );
 
   return (
     <View style={styles.container}>
@@ -590,44 +584,7 @@ export function HomeScreen({ navigation }: Props) {
           />
         )}
 
-        {!loading ? (
-          <DocumentPipelineSummaryCard
-            title="Belge işlem özeti"
-            subtitle="OCR, export ve recovery görünürlüğü tek yerden takip ediliyor."
-            message={summaryMessage}
-            tone={summaryTone}
-            icon="pulse-outline"
-            stats={[
-              {
-                label: `${overview.processingCount} işleniyor`,
-                tone: 'accent',
-                icon: 'hourglass-outline',
-              },
-              {
-                label: `${overview.failedCount} hata`,
-                tone: overview.failedCount > 0 ? 'warning' : 'muted',
-                icon: 'alert-circle-outline',
-              },
-              {
-                label: `${overview.pdfReadyCount} PDF hazır`,
-                tone: 'success',
-                icon: 'document-outline',
-              },
-              {
-                label: `${overview.favoriteCount} favori`,
-                tone: 'default',
-                icon: 'star-outline',
-              },
-            ]}
-            actions={[
-              {
-                label: 'Belge merkezini aç',
-                onPress: handleOpenDocuments,
-                variant: 'secondary',
-              },
-            ]}
-          />
-        ) : null}
+        {!loading ? <DocumentPipelineSummaryCard {...summaryCard} /> : null}
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Hızlı giriş</Text>
