@@ -158,12 +158,12 @@ function InfoBadge({
             tone === 'success'
               ? colors.primary
               : tone === 'accent'
-              ? '#60A5FA'
-              : tone === 'danger'
-              ? '#F87171'
-              : tone === 'warning'
-              ? '#FBBF24'
-              : colors.textSecondary
+                ? '#60A5FA'
+                : tone === 'danger'
+                  ? '#F87171'
+                  : tone === 'warning'
+                    ? '#FBBF24'
+                    : colors.textSecondary
           }
         />
       ) : null}
@@ -355,24 +355,24 @@ export function DocumentDetailScreen({
   const pdfActionCaption = !billingHydrated
     ? 'Premium durumu yükleniyor'
     : capabilities.canExportPdf
-    ? documentPdfPath
-      ? 'Mevcut PDF çıktısını güncelle'
-      : 'Güncel sayfalardan PDF oluştur'
-    : 'Premium ile PDF kaydetmeyi aç';
+      ? documentPdfPath
+        ? 'Mevcut PDF çıktısını güncelle'
+        : 'Güncel sayfalardan PDF oluştur'
+      : 'Premium ile PDF kaydetmeyi aç';
 
   const wordActionCaption = !billingHydrated
     ? 'Premium durumu yükleniyor'
     : capabilities.canExportWord
-    ? documentWordPath
-      ? 'Mevcut Word çıktısını güncelle'
-      : 'OCR metnini Word olarak hazırla'
-    : 'Premium ile Word kaydetmeyi aç';
+      ? documentWordPath
+        ? 'Mevcut Word çıktısını güncelle'
+        : 'OCR metnini Word olarak hazırla'
+      : 'Premium ile Word kaydetmeyi aç';
 
   const excelActionCaption = !billingHydrated
     ? 'Premium durumu yükleniyor'
     : capabilities.canExportExcel
-    ? 'OCR metnini Excel olarak hazırla'
-    : 'Premium ile Excel kaydetmeyi aç';
+      ? 'OCR metnini Excel olarak hazırla'
+      : 'Premium ile Excel kaydetmeyi aç';
 
   const safeLogAudit = useCallback(
     async ({
