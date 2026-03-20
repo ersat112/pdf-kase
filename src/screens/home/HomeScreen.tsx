@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 
 import { BannerStrip } from '../../components/ads/BannerStrip';
+import { DocumentPipelineSummaryCard } from '../../components/documents/DocumentPipelineSummaryCard';
 import { LocalTrustBadge } from '../../components/trust/LocalTrustBadge';
 import { executeToolPrimaryAction } from '../../features/tools/tools.actions';
 import {
@@ -250,36 +251,6 @@ function SecondaryToolCard({
   );
 }
 
-function SummaryChip({
-  label,
-  tone = 'default',
-}: {
-  label: string;
-  tone?: 'default' | 'success' | 'accent' | 'warning';
-}) {
-  return (
-    <View
-      style={[
-        styles.summaryChip,
-        tone === 'success' && styles.summaryChipSuccess,
-        tone === 'accent' && styles.summaryChipAccent,
-        tone === 'warning' && styles.summaryChipWarning,
-      ]}
-    >
-      <Text
-        style={[
-          styles.summaryChipText,
-          tone === 'success' && styles.summaryChipTextSuccess,
-          tone === 'accent' && styles.summaryChipTextAccent,
-          tone === 'warning' && styles.summaryChipTextWarning,
-        ]}
-      >
-        {label}
-      </Text>
-    </View>
-  );
-}
-
 function ContinueDocumentCard({
   document,
   onPress,
@@ -400,62 +371,6 @@ function ContinueDocumentCard({
         </View>
       </View>
     </Pressable>
-  );
-}
-
-function RecoverySummaryCard({
-  processingCount,
-  failedCount,
-  pdfReadyCount,
-  favoriteCount,
-  onOpenDocuments,
-}: {
-  processingCount: number;
-  failedCount: number;
-  pdfReadyCount: number;
-  favoriteCount: number;
-  onOpenDocuments: () => void;
-}) {
-  return (
-    <View style={styles.recoveryCard}>
-      <View style={styles.recoveryHeaderRow}>
-        <View style={styles.recoveryIconWrap}>
-          <Ionicons name="pulse-outline" size={18} color={colors.primary} />
-        </View>
-
-        <View style={styles.recoveryTextWrap}>
-          <Text style={styles.recoveryTitle}>Belge işlem özeti</Text>
-          <Text style={styles.recoverySubtitle}>
-            OCR, export ve recovery görünürlüğü tek yerden takip ediliyor.
-          </Text>
-        </View>
-      </View>
-
-      <View style={styles.recoveryChipRow}>
-        <SummaryChip label={`${processingCount} işleniyor`} tone="accent" />
-        <SummaryChip label={`${failedCount} hata`} tone="warning" />
-        <SummaryChip label={`${pdfReadyCount} PDF hazır`} tone="success" />
-        <SummaryChip label={`${favoriteCount} favori`} tone="default" />
-      </View>
-
-      <Text style={styles.recoveryText}>
-        {failedCount > 0
-          ? 'Başarısız OCR kayıtları için belge merkezinden retry akışına geç.'
-          : processingCount > 0
-          ? 'Devam eden OCR işlemleri belge merkezinde canlı durum kartlarıyla görünür.'
-          : 'Belge pipeline temiz durumda. Yeni işleme başlayabilir veya son belgeye dönebilirsin.'}
-      </Text>
-
-      <Pressable
-        onPress={onOpenDocuments}
-        style={({ pressed }) => [
-          styles.recoveryButton,
-          pressed && styles.pressed,
-        ]}
-      >
-        <Text style={styles.recoveryButtonText}>Belge merkezini aç</Text>
-      </Pressable>
-    </View>
   );
 }
 
@@ -620,6 +535,20 @@ export function HomeScreen({ navigation }: Props) {
     ? 'Belgeler hazırlanıyor'
     : `${overview.totalCount} belge`;
 
+  const summaryTone =
+    overview.failedCount > 0
+      ? 'warning'
+      : overview.processingCount > 0
+        ? 'accent'
+        : 'default';
+
+  const summaryMessage =
+    overview.failedCount > 0
+      ? 'Başarısız OCR kayıtları için belge merkezinden retry akışına geç.'
+      : overview.processingCount > 0
+        ? 'Devam eden OCR işlemleri belge merkezinde canlı durum kartlarıyla görünür.'
+        : 'Belge pipeline temiz durumda. Yeni işleme başlayabilir veya son belgeye dönebilirsin.';
+
   return (
     <View style={styles.container}>
       <ScrollView
@@ -662,12 +591,41 @@ export function HomeScreen({ navigation }: Props) {
         )}
 
         {!loading ? (
-          <RecoverySummaryCard
-            processingCount={overview.processingCount}
-            failedCount={overview.failedCount}
-            pdfReadyCount={overview.pdfReadyCount}
-            favoriteCount={overview.favoriteCount}
-            onOpenDocuments={handleOpenDocuments}
+          <DocumentPipelineSummaryCard
+            title="Belge işlem özeti"
+            subtitle="OCR, export ve recovery görünürlüğü tek yerden takip ediliyor."
+            message={summaryMessage}
+            tone={summaryTone}
+            icon="pulse-outline"
+            stats={[
+              {
+                label: `${overview.processingCount} işleniyor`,
+                tone: 'accent',
+                icon: 'hourglass-outline',
+              },
+              {
+                label: `${overview.failedCount} hata`,
+                tone: overview.failedCount > 0 ? 'warning' : 'muted',
+                icon: 'alert-circle-outline',
+              },
+              {
+                label: `${overview.pdfReadyCount} PDF hazır`,
+                tone: 'success',
+                icon: 'document-outline',
+              },
+              {
+                label: `${overview.favoriteCount} favori`,
+                tone: 'default',
+                icon: 'star-outline',
+              },
+            ]}
+            actions={[
+              {
+                label: 'Belge merkezini aç',
+                onPress: handleOpenDocuments,
+                variant: 'secondary',
+              },
+            ]}
           />
         ) : null}
 
@@ -953,100 +911,6 @@ const styles = StyleSheet.create({
   continueSecondaryButtonText: {
     color: colors.text,
     fontWeight: '700',
-    fontSize: 14,
-  },
-  recoveryCard: {
-    borderRadius: Radius.xl,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    padding: Spacing.lg,
-    gap: Spacing.md,
-    ...Shadows.sm,
-  },
-  recoveryHeaderRow: {
-    flexDirection: 'row',
-    gap: Spacing.md,
-    alignItems: 'flex-start',
-  },
-  recoveryIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.surfaceElevated,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  recoveryTextWrap: {
-    flex: 1,
-    gap: 4,
-  },
-  recoveryTitle: {
-    ...Typography.titleSmall,
-    color: colors.text,
-  },
-  recoverySubtitle: {
-    ...Typography.bodySmall,
-    color: colors.textSecondary,
-    lineHeight: 20,
-  },
-  recoveryChipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  summaryChip: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceElevated,
-  },
-  summaryChipSuccess: {
-    backgroundColor: 'rgba(53, 199, 111, 0.12)',
-    borderColor: 'rgba(53, 199, 111, 0.28)',
-  },
-  summaryChipAccent: {
-    backgroundColor: 'rgba(59, 130, 246, 0.12)',
-    borderColor: 'rgba(59, 130, 246, 0.28)',
-  },
-  summaryChipWarning: {
-    backgroundColor: 'rgba(245, 158, 11, 0.12)',
-    borderColor: 'rgba(245, 158, 11, 0.24)',
-  },
-  summaryChipText: {
-    ...Typography.caption,
-    color: colors.textSecondary,
-    fontWeight: '800',
-  },
-  summaryChipTextSuccess: {
-    color: colors.primary,
-  },
-  summaryChipTextAccent: {
-    color: '#60A5FA',
-  },
-  summaryChipTextWarning: {
-    color: '#FBBF24',
-  },
-  recoveryText: {
-    ...Typography.bodySmall,
-    color: colors.textSecondary,
-    lineHeight: 20,
-  },
-  recoveryButton: {
-    minHeight: 42,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceElevated,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: Spacing.md,
-  },
-  recoveryButtonText: {
-    color: colors.text,
-    fontWeight: '800',
     fontSize: 14,
   },
   sectionHeader: {
