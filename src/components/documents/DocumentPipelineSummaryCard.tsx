@@ -14,37 +14,21 @@ import {
     Typography,
     colors,
 } from '../../theme';
+import type {
+  DocumentPipelineSummaryAction,
+  DocumentPipelineSummaryModel,
+  DocumentPipelineSummaryStat,
+  DocumentPipelineSummaryTone,
+} from '../../modules/documents/document-presentation';
 
-export type DocumentPipelineSummaryTone =
-  | 'default'
-  | 'success'
-  | 'accent'
-  | 'muted'
-  | 'danger'
-  | 'warning';
+export type {
+  DocumentPipelineSummaryAction,
+  DocumentPipelineSummaryModel,
+  DocumentPipelineSummaryStat,
+  DocumentPipelineSummaryTone,
+} from '../../modules/documents/document-presentation';
 
-export type DocumentPipelineSummaryStat = {
-  label: string;
-  tone?: DocumentPipelineSummaryTone;
-  icon?: React.ComponentProps<typeof Ionicons>['name'];
-};
-
-export type DocumentPipelineSummaryAction = {
-  label: string;
-  onPress: () => void;
-  variant?: 'primary' | 'secondary';
-  disabled?: boolean;
-};
-
-type Props = {
-  title: string;
-  subtitle: string;
-  message: string;
-  tone?: DocumentPipelineSummaryTone;
-  icon?: React.ComponentProps<typeof Ionicons>['name'];
-  stats?: DocumentPipelineSummaryStat[];
-  actions?: DocumentPipelineSummaryAction[];
-};
+type Props = DocumentPipelineSummaryModel;
 
 function getTonePalette(tone: DocumentPipelineSummaryTone) {
   switch (tone) {
