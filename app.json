@@ -7,7 +7,6 @@
     "scheme": "pdfkase",
     "userInterfaceStyle": "automatic",
     "icon": "./assets/images/icon.png",
-    "newArchEnabled": true,
     "ios": {
       "bundleIdentifier": "com.ersatbulbul.pdfkase",
       "icon": "./assets/images/icon.png",
