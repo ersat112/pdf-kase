@@ -16,7 +16,6 @@ import {
 import {
   optimizeImageForPdf,
   rotateImageRight,
-  type PdfImageQualityPreset,
 } from '../imaging/imaging.service';
 import { extractTextFromDocumentPages } from '../ocr/ocr.service';
 import {
@@ -55,6 +54,9 @@ export type DocumentSummary = {
   ocr_status: DocumentOcrStatus;
   word_path: string | null;
   is_favorite: number;
+  collection_id: number | null;
+  collection_name: string | null;
+  tag_names: string[];
   page_count: number;
   created_at: string;
   updated_at: string;
@@ -89,6 +91,9 @@ export type DocumentDetail = {
   word_path: string | null;
   word_updated_at: string | null;
   is_favorite: number;
+  collection_id: number | null;
+  collection_name: string | null;
+  tag_names: string[];
   created_at: string;
   updated_at: string;
   pages: DocumentPage[];
@@ -170,31 +175,13 @@ export type MergeDocumentsResult = {
   sourceDocumentCount: number;
 };
 
-export type DocumentPdfCompressionPreset = PdfImageQualityPreset;
-
-export type DocumentPdfCompressionPresetOption = {
-  key: DocumentPdfCompressionPreset;
-  label: string;
-  description: string;
+type RawDocumentSummary = Omit<DocumentSummary, 'tag_names'> & {
+  tag_names_csv: string | null;
 };
 
-export const DOCUMENT_PDF_COMPRESSION_PRESETS: DocumentPdfCompressionPresetOption[] = [
-  {
-    key: 'compact',
-    label: 'Kompakt',
-    description: 'Daha küçük dosya',
-  },
-  {
-    key: 'balanced',
-    label: 'Dengeli',
-    description: 'Önerilen kalite',
-  },
-  {
-    key: 'high',
-    label: 'Yüksek',
-    description: 'Daha net çıktı',
-  },
-];
+type RawDocumentDetail = Omit<DocumentDetail, 'pages' | 'tag_names'> & {
+  tag_names_csv: string | null;
+};
 
 type OverlayContent = {
   assetId?: number;
@@ -355,6 +342,35 @@ function normalizeDocumentText(value: string | null | undefined) {
     .replace(/\r/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+function parseTagNamesCsv(value: string | null | undefined) {
+  if (!value) {
+    return [];
+  }
+
+  return value
+    .split('|||')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function mapRawDocumentSummary(row: RawDocumentSummary): DocumentSummary {
+  return {
+    ...row,
+    tag_names: parseTagNamesCsv(row.tag_names_csv),
+  };
+}
+
+function mapRawDocumentDetail(
+  row: RawDocumentDetail,
+  pages: DocumentPage[],
+): DocumentDetail {
+  return {
+    ...row,
+    tag_names: parseTagNamesCsv(row.tag_names_csv),
+    pages,
+  };
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -1192,7 +1208,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 export async function getRecentDocuments(limit = 20): Promise<DocumentSummary[]> {
   const db = await getDb();
 
-  return db.getAllAsync<DocumentSummary>(
+  const rows = await db.getAllAsync<RawDocumentSummary>(
     `
       SELECT
         d.id,
@@ -1203,19 +1219,36 @@ export async function getRecentDocuments(limit = 20): Promise<DocumentSummary[]>
         COALESCE(d.ocr_status, 'idle') AS ocr_status,
         d.word_path,
         COALESCE(d.is_favorite, 0) AS is_favorite,
+        d.collection_id,
+        c.name AS collection_name,
         d.created_at,
         d.updated_at,
         COALESCE((
           SELECT COUNT(*)
           FROM document_pages p
           WHERE p.document_id = d.id
-        ), 0) AS page_count
+        ), 0) AS page_count,
+        COALESCE((
+          SELECT GROUP_CONCAT(name, '|||')
+          FROM (
+            SELECT t.name AS name
+            FROM document_tag_links l
+            INNER JOIN document_tags t
+              ON t.id = l.tag_id
+            WHERE l.document_id = d.id
+            ORDER BY t.name COLLATE NOCASE ASC
+          )
+        ), '') AS tag_names_csv
       FROM documents d
+      LEFT JOIN document_collections c
+        ON c.id = d.collection_id
       ORDER BY d.updated_at DESC
       LIMIT ?
     `,
     normalizeListLimit(limit),
   );
+
+  return rows.map(mapRawDocumentSummary);
 }
 
 export async function listDocuments(limit = 50): Promise<DocumentSummary[]> {
@@ -1252,25 +1285,40 @@ export async function getDocumentDetail(
 
   const db = await getDb();
 
-  const document = await db.getFirstAsync<Omit<DocumentDetail, 'pages'>>(
+  const document = await db.getFirstAsync<RawDocumentDetail>(
     `
       SELECT
-        id,
-        title,
-        status,
-        pdf_path,
-        thumbnail_path,
-        ocr_text,
-        COALESCE(ocr_status, 'idle') AS ocr_status,
-        ocr_updated_at,
-        ocr_error,
-        word_path,
-        word_updated_at,
-        COALESCE(is_favorite, 0) AS is_favorite,
-        created_at,
-        updated_at
-      FROM documents
-      WHERE id = ?
+        d.id,
+        d.title,
+        d.status,
+        d.pdf_path,
+        d.thumbnail_path,
+        d.ocr_text,
+        COALESCE(d.ocr_status, 'idle') AS ocr_status,
+        d.ocr_updated_at,
+        d.ocr_error,
+        d.word_path,
+        d.word_updated_at,
+        COALESCE(d.is_favorite, 0) AS is_favorite,
+        d.collection_id,
+        c.name AS collection_name,
+        d.created_at,
+        d.updated_at,
+        COALESCE((
+          SELECT GROUP_CONCAT(name, '|||')
+          FROM (
+            SELECT t.name AS name
+            FROM document_tag_links l
+            INNER JOIN document_tags t
+              ON t.id = l.tag_id
+            WHERE l.document_id = d.id
+            ORDER BY t.name COLLATE NOCASE ASC
+          )
+        ), '') AS tag_names_csv
+      FROM documents d
+      LEFT JOIN document_collections c
+        ON c.id = d.collection_id
+      WHERE d.id = ?
     `,
     documentId,
   );
@@ -1296,10 +1344,7 @@ export async function getDocumentDetail(
     documentId,
   );
 
-  return {
-    ...document,
-    pages,
-  };
+  return mapRawDocumentDetail(document, pages);
 }
 
 export async function renameDocumentTitle(
@@ -1728,10 +1773,7 @@ export async function translateDocumentTextToTurkish(
   };
 }
 
-export async function exportDocumentToPdf(
-  documentId: number,
-  compressionPreset: DocumentPdfCompressionPreset = 'balanced',
-) {
+export async function exportDocumentToPdf(documentId: number) {
   if (!isPositiveInteger(documentId)) {
     throw new Error('Geçersiz belge kimliği.');
   }
@@ -1752,7 +1794,7 @@ export async function exportDocumentToPdf(
 
   try {
     for (const page of document.pages) {
-      const optimizedUri = await optimizeImageForPdf(page.image_path, compressionPreset);
+      const optimizedUri = await optimizeImageForPdf(page.image_path, 'balanced');
 
       if (optimizedUri !== page.image_path) {
         temporaryPageUris.push(optimizedUri);
@@ -1895,10 +1937,7 @@ export async function exportDocumentToPdf(
       await removeFileIfExists(previousPdfPath);
     }
 
-    return {
-      ...pdf,
-      compressionPreset,
-    };
+    return pdf;
   } finally {
     await Promise.all(
       collectUniqueFilePaths(temporaryPageUris).map((uri) => removeFileIfExists(uri)),
