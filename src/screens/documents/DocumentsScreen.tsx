@@ -16,6 +16,11 @@ import {
 import { Screen } from '../../components/common/Screen';
 import { LocalTrustBadge } from '../../components/trust/LocalTrustBadge';
 import {
+  getPremiumGateMessage,
+  resolveBillingCapabilities,
+} from '../../modules/billing/billing-capabilities';
+import { logDocumentAuditEvent } from '../../modules/documents/document-audit.service';
+import {
   addTagToDocuments,
   listDocumentCollections,
   listDocumentTags,
@@ -24,6 +29,8 @@ import {
   type DocumentTagSummary,
 } from '../../modules/documents/document-taxonomy.service';
 import {
+  exportDocumentToPdf,
+  extractDocumentText,
   getRecentDocuments,
   mergeDocuments,
   renameDocumentTitle,
@@ -31,6 +38,7 @@ import {
   setDocumentsFavorite,
   type DocumentSummary,
 } from '../../modules/documents/document.service';
+import { useBillingStore } from '../../store/useBillingStore';
 import {
   Radius,
   Shadows,
@@ -39,7 +47,30 @@ import {
   colors,
 } from '../../theme';
 
-type FilterKey = 'all' | 'draft' | 'ready' | 'ocr' | 'pdf' | 'favorite';
+type FilterKey =
+  | 'all'
+  | 'draft'
+  | 'ready'
+  | 'ocr'
+  | 'processing'
+  | 'failed'
+  | 'pdf'
+  | 'favorite';
+
+type BatchActionKey = 'ocr' | 'pdf';
+
+type BatchResult = {
+  key: BatchActionKey;
+  title: string;
+  completedAt: string;
+  succeededCount: number;
+  failedCount: number;
+  skippedCount: number;
+  failedTitles: string[];
+  skippedTitles: string[];
+  retryDocumentIds: number[];
+  extraLine?: string | null;
+};
 
 function isFavorite(item: DocumentSummary) {
   return item.is_favorite === 1;
@@ -48,6 +79,14 @@ function isFavorite(item: DocumentSummary) {
 function getStatusLabel(item: DocumentSummary) {
   if (item.pdf_path && item.status === 'ready') {
     return 'PDF Hazır';
+  }
+
+  if (item.ocr_status === 'processing') {
+    return 'OCR İşleniyor';
+  }
+
+  if (item.ocr_status === 'failed') {
+    return 'OCR Hata';
   }
 
   if (item.ocr_status === 'ready') {
@@ -68,18 +107,22 @@ function getStatusLabel(item: DocumentSummary) {
 
 function getStatusTone(item: DocumentSummary) {
   if (item.pdf_path && item.status === 'ready') {
-    return 'success';
+    return 'success' as const;
   }
 
-  if (item.ocr_status === 'ready') {
-    return 'accent';
+  if (item.ocr_status === 'processing' || item.ocr_status === 'ready') {
+    return 'accent' as const;
+  }
+
+  if (item.ocr_status === 'failed') {
+    return 'danger' as const;
   }
 
   if (item.status === 'draft') {
-    return 'muted';
+    return 'muted' as const;
   }
 
-  return 'default';
+  return 'default' as const;
 }
 
 function formatDate(value: string) {
@@ -105,6 +148,10 @@ function matchesFilter(item: DocumentSummary, filter: FilterKey) {
       return item.status === 'ready';
     case 'ocr':
       return item.ocr_status === 'ready';
+    case 'processing':
+      return item.ocr_status === 'processing';
+    case 'failed':
+      return item.ocr_status === 'failed';
     case 'pdf':
       return Boolean(item.pdf_path);
     case 'favorite':
@@ -113,6 +160,38 @@ function matchesFilter(item: DocumentSummary, filter: FilterKey) {
     default:
       return true;
   }
+}
+
+function formatBatchSummaryText(result: BatchResult) {
+  const lines = [
+    `Başarılı: ${result.succeededCount}`,
+    `Hatalı: ${result.failedCount}`,
+    `Atlanan: ${result.skippedCount}`,
+  ];
+
+  if (result.extraLine) {
+    lines.push(result.extraLine);
+  }
+
+  if (result.failedTitles.length > 0) {
+    const preview = result.failedTitles.slice(0, 3).join(', ');
+    const suffix =
+      result.failedTitles.length > 3
+        ? ` +${result.failedTitles.length - 3}`
+        : '';
+    lines.push(`Hata: ${preview}${suffix}`);
+  }
+
+  if (result.skippedTitles.length > 0) {
+    const preview = result.skippedTitles.slice(0, 3).join(', ');
+    const suffix =
+      result.skippedTitles.length > 3
+        ? ` +${result.skippedTitles.length - 3}`
+        : '';
+    lines.push(`Atlanan: ${preview}${suffix}`);
+  }
+
+  return lines.join('\n');
 }
 
 function FilterChip({
@@ -256,6 +335,7 @@ function StatusBadge({ item }: { item: DocumentSummary }) {
         tone === 'success' && styles.statusBadgeSuccess,
         tone === 'accent' && styles.statusBadgeAccent,
         tone === 'muted' && styles.statusBadgeMuted,
+        tone === 'danger' && styles.statusBadgeDanger,
       ]}
     >
       <Text
@@ -264,6 +344,7 @@ function StatusBadge({ item }: { item: DocumentSummary }) {
           tone === 'success' && styles.statusBadgeTextSuccess,
           tone === 'accent' && styles.statusBadgeTextAccent,
           tone === 'muted' && styles.statusBadgeTextMuted,
+          tone === 'danger' && styles.statusBadgeTextDanger,
         ]}
       >
         {getStatusLabel(item)}
@@ -460,11 +541,18 @@ function DocumentCard({
 export function DocumentsScreen() {
   const navigation = useNavigation<any>();
 
+  const billingHydrated = useBillingStore((state) => state.hydrated);
+  const isPro = useBillingStore((state) => state.isPro);
+  const plan = useBillingStore((state) => state.plan);
+  const expiresAt = useBillingStore((state) => state.expiresAt);
+
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [collections, setCollections] = useState<DocumentCollectionSummary[]>([]);
   const [tags, setTags] = useState<DocumentTagSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const [batchResult, setBatchResult] = useState<BatchResult | null>(null);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<FilterKey>('all');
   const [selectedCollectionName, setSelectedCollectionName] = useState<string | null>(null);
@@ -474,6 +562,16 @@ export function DocumentsScreen() {
   const [renameValue, setRenameValue] = useState('');
   const [collectionInput, setCollectionInput] = useState('');
   const [tagInput, setTagInput] = useState('');
+
+  const capabilities = useMemo(
+    () =>
+      resolveBillingCapabilities({
+        isPro,
+        plan,
+        expiresAt,
+      }),
+    [expiresAt, isPro, plan],
+  );
 
   const loadDocuments = useCallback(async () => {
     try {
@@ -608,9 +706,37 @@ export function DocumentsScreen() {
     return documents.filter((item) => isFavorite(item)).length;
   }, [documents]);
 
+  const processingCount = useMemo(() => {
+    return documents.filter((item) => item.ocr_status === 'processing').length;
+  }, [documents]);
+
+  const failedOcrCount = useMemo(() => {
+    return documents.filter((item) => item.ocr_status === 'failed').length;
+  }, [documents]);
+
   const selectedDocuments = useMemo(() => {
     return documents.filter((item) => selectedIds.includes(item.id));
   }, [documents, selectedIds]);
+
+  const eligibleBatchDocuments = useMemo(() => {
+    return selectedDocuments.filter((item) => item.page_count > 0);
+  }, [selectedDocuments]);
+
+  const skippedBatchDocuments = useMemo(() => {
+    return selectedDocuments.filter((item) => item.page_count <= 0);
+  }, [selectedDocuments]);
+
+  const retryableSelectedFailedDocuments = useMemo(() => {
+    return selectedDocuments.filter(
+      (item) => item.page_count > 0 && item.ocr_status === 'failed',
+    );
+  }, [selectedDocuments]);
+
+  const failedVisibleDocuments = useMemo(() => {
+    return filteredDocuments.filter(
+      (item) => item.page_count > 0 && item.ocr_status === 'failed',
+    );
+  }, [filteredDocuments]);
 
   const singleSelectedDocument = selectedDocuments.length === 1 ? selectedDocuments[0] : null;
 
@@ -622,6 +748,13 @@ export function DocumentsScreen() {
     setTagInput('');
   }, []);
 
+  const setSelectedDocumentIds = useCallback((documentIds: number[]) => {
+    const uniqueIds = Array.from(new Set(documentIds));
+    setSelectedIds(uniqueIds);
+    setRenameTargetId(null);
+    setRenameValue('');
+  }, []);
+
   const toggleSelectedId = useCallback((documentId: number) => {
     setSelectedIds((current) =>
       current.includes(documentId)
@@ -629,6 +762,284 @@ export function DocumentsScreen() {
         : [...current, documentId],
     );
   }, []);
+
+  const logAuditSafely = useCallback(
+    async (input: {
+      documentId: number;
+      actionKey: string;
+      actionLabel: string;
+      status: 'started' | 'completed' | 'failed' | 'requires_premium';
+      reason?: string | null;
+      metadata?: Record<string, unknown> | null;
+    }) => {
+      try {
+        await logDocumentAuditEvent(input);
+      } catch (error) {
+        console.warn('[Documents] Audit log failed:', error);
+      }
+    },
+    [],
+  );
+
+  const setBatchResultState = useCallback((result: BatchResult) => {
+    setBatchResult(result);
+  }, []);
+
+  const runBatchOcr = useCallback(
+    async ({
+      targetDocuments,
+      skippedDocuments,
+      title,
+      clearSelectionAfter = true,
+    }: {
+      targetDocuments: DocumentSummary[];
+      skippedDocuments: DocumentSummary[];
+      title: string;
+      clearSelectionAfter?: boolean;
+    }) => {
+      if (!targetDocuments.length && !skippedDocuments.length) {
+        return;
+      }
+
+      const failedTitles: string[] = [];
+      const skippedTitles = skippedDocuments.map((item) => item.title);
+      const retryDocumentIds: number[] = [];
+      let succeededCount = 0;
+      let failedCount = 0;
+
+      try {
+        setBusy(true);
+        setBusyLabel(`${title} hazırlanıyor...`);
+
+        for (const item of skippedDocuments) {
+          await logAuditSafely({
+            documentId: item.id,
+            actionKey: 'ocr',
+            actionLabel: title,
+            status: 'failed',
+            reason:
+              'Bu belge sayfa tabanlı değil. OCR yalnızca sayfa tabanlı belgelerde çalışır.',
+          });
+        }
+
+        for (let index = 0; index < targetDocuments.length; index += 1) {
+          const item = targetDocuments[index];
+          setBusyLabel(`${title} (${index + 1}/${targetDocuments.length})...`);
+
+          await logAuditSafely({
+            documentId: item.id,
+            actionKey: 'ocr',
+            actionLabel: title,
+            status: 'started',
+          });
+
+          try {
+            const result = await extractDocumentText(item.id);
+            succeededCount += 1;
+
+            await logAuditSafely({
+              documentId: item.id,
+              actionKey: 'ocr',
+              actionLabel: title,
+              status: 'completed',
+              metadata: {
+                extractedPageCount: result.extractedPageCount,
+                extractedCharacterCount: result.extractedCharacterCount,
+                batch: true,
+              },
+            });
+          } catch (error) {
+            failedCount += 1;
+            failedTitles.push(item.title);
+            retryDocumentIds.push(item.id);
+
+            await logAuditSafely({
+              documentId: item.id,
+              actionKey: 'ocr',
+              actionLabel: title,
+              status: 'failed',
+              reason:
+                error instanceof Error ? error.message : 'Toplu OCR başarısız.',
+            });
+          }
+        }
+
+        await loadDocuments();
+
+        if (clearSelectionAfter) {
+          clearSelection();
+        }
+
+        setBatchResultState({
+          key: 'ocr',
+          title,
+          completedAt: new Date().toISOString(),
+          succeededCount,
+          failedCount,
+          skippedCount: skippedDocuments.length,
+          failedTitles,
+          skippedTitles,
+          retryDocumentIds,
+        });
+      } finally {
+        setBusy(false);
+        setBusyLabel(null);
+      }
+    },
+    [clearSelection, loadDocuments, logAuditSafely, setBatchResultState],
+  );
+
+  const runBatchPdfExport = useCallback(
+    async ({
+      targetDocuments,
+      skippedDocuments,
+      title,
+      clearSelectionAfter = true,
+    }: {
+      targetDocuments: DocumentSummary[];
+      skippedDocuments: DocumentSummary[];
+      title: string;
+      clearSelectionAfter?: boolean;
+    }) => {
+      if (!targetDocuments.length && !skippedDocuments.length) {
+        return;
+      }
+
+      if (!billingHydrated) {
+        return;
+      }
+
+      if (!capabilities.canExportPdf) {
+        for (const item of [...targetDocuments, ...skippedDocuments]) {
+          await logAuditSafely({
+            documentId: item.id,
+            actionKey: 'pdf',
+            actionLabel: title,
+            status: 'requires_premium',
+            reason: 'Toplu PDF export premium gerektirir.',
+          });
+        }
+
+        Alert.alert(
+          'Premium gerekli',
+          getPremiumGateMessage('export_pdf'),
+          [
+            {
+              text: 'Şimdi değil',
+              style: 'cancel',
+            },
+            {
+              text: "Premium'u gör",
+              onPress: () => navigation.navigate('Pricing'),
+            },
+          ],
+        );
+        return;
+      }
+
+      const failedTitles: string[] = [];
+      const skippedTitles = skippedDocuments.map((item) => item.title);
+      const retryDocumentIds: number[] = [];
+      let succeededCount = 0;
+      let failedCount = 0;
+      let reExportedCount = 0;
+
+      try {
+        setBusy(true);
+        setBusyLabel(`${title} hazırlanıyor...`);
+
+        for (const item of skippedDocuments) {
+          await logAuditSafely({
+            documentId: item.id,
+            actionKey: 'pdf',
+            actionLabel: title,
+            status: 'failed',
+            reason:
+              'Bu belge sayfa tabanlı değil. PDF export yalnızca sayfa tabanlı belgelerde çalışır.',
+          });
+        }
+
+        for (let index = 0; index < targetDocuments.length; index += 1) {
+          const item = targetDocuments[index];
+          setBusyLabel(`${title} (${index + 1}/${targetDocuments.length})...`);
+
+          await logAuditSafely({
+            documentId: item.id,
+            actionKey: 'pdf',
+            actionLabel: title,
+            status: 'started',
+          });
+
+          try {
+            const result = await exportDocumentToPdf(item.id);
+            succeededCount += 1;
+
+            if (item.pdf_path) {
+              reExportedCount += 1;
+            }
+
+            await logAuditSafely({
+              documentId: item.id,
+              actionKey: 'pdf',
+              actionLabel: title,
+              status: 'completed',
+              metadata: {
+                fileName: result.fileName,
+                batch: true,
+                reExported: Boolean(item.pdf_path),
+              },
+            });
+          } catch (error) {
+            failedCount += 1;
+            failedTitles.push(item.title);
+            retryDocumentIds.push(item.id);
+
+            await logAuditSafely({
+              documentId: item.id,
+              actionKey: 'pdf',
+              actionLabel: title,
+              status: 'failed',
+              reason:
+                error instanceof Error
+                  ? error.message
+                  : 'Toplu PDF export başarısız.',
+            });
+          }
+        }
+
+        await loadDocuments();
+
+        if (clearSelectionAfter) {
+          clearSelection();
+        }
+
+        setBatchResultState({
+          key: 'pdf',
+          title,
+          completedAt: new Date().toISOString(),
+          succeededCount,
+          failedCount,
+          skippedCount: skippedDocuments.length,
+          failedTitles,
+          skippedTitles,
+          retryDocumentIds,
+          extraLine: `Yeniden oluşturulan: ${reExportedCount}`,
+        });
+      } finally {
+        setBusy(false);
+        setBusyLabel(null);
+      }
+    },
+    [
+      billingHydrated,
+      capabilities.canExportPdf,
+      clearSelection,
+      loadDocuments,
+      logAuditSafely,
+      navigation,
+      setBatchResultState,
+    ],
+  );
 
   const handleCardPress = useCallback(
     (item: DocumentSummary) => {
@@ -657,6 +1068,7 @@ export function DocumentsScreen() {
     async (item: DocumentSummary) => {
       try {
         setBusy(true);
+        setBusyLabel('Favori durumu güncelleniyor...');
         await setDocumentFavorite(item.id, !isFavorite(item));
         await loadDocuments();
       } catch (error) {
@@ -666,6 +1078,7 @@ export function DocumentsScreen() {
         );
       } finally {
         setBusy(false);
+        setBusyLabel(null);
       }
     },
     [loadDocuments],
@@ -679,6 +1092,7 @@ export function DocumentsScreen() {
 
       try {
         setBusy(true);
+        setBusyLabel(nextFavorite ? 'Toplu favori uygulanıyor...' : 'Favoriler temizleniyor...');
         await setDocumentsFavorite(selectedIds, nextFavorite);
         await loadDocuments();
         clearSelection();
@@ -689,6 +1103,7 @@ export function DocumentsScreen() {
         );
       } finally {
         setBusy(false);
+        setBusyLabel(null);
       }
     },
     [clearSelection, loadDocuments, selectedIds],
@@ -702,6 +1117,7 @@ export function DocumentsScreen() {
 
       try {
         setBusy(true);
+        setBusyLabel('Klasör ataması uygulanıyor...');
         await setDocumentsCollection(selectedIds, collectionName);
         await loadDocuments();
         setCollectionInput('');
@@ -712,6 +1128,7 @@ export function DocumentsScreen() {
         );
       } finally {
         setBusy(false);
+        setBusyLabel(null);
       }
     },
     [loadDocuments, selectedIds],
@@ -725,6 +1142,7 @@ export function DocumentsScreen() {
 
       try {
         setBusy(true);
+        setBusyLabel('Etiketler ekleniyor...');
         await addTagToDocuments(selectedIds, tagName);
         await loadDocuments();
         setTagInput('');
@@ -735,6 +1153,7 @@ export function DocumentsScreen() {
         );
       } finally {
         setBusy(false);
+        setBusyLabel(null);
       }
     },
     [loadDocuments, selectedIds],
@@ -761,6 +1180,7 @@ export function DocumentsScreen() {
 
     try {
       setBusy(true);
+      setBusyLabel('Belge adı güncelleniyor...');
       await renameDocumentTitle(renameTargetId, renameValue);
       await loadDocuments();
       setRenameTargetId(null);
@@ -773,6 +1193,7 @@ export function DocumentsScreen() {
       );
     } finally {
       setBusy(false);
+      setBusyLabel(null);
     }
   }, [clearSelection, loadDocuments, renameTargetId, renameValue]);
 
@@ -783,6 +1204,7 @@ export function DocumentsScreen() {
 
     try {
       setBusy(true);
+      setBusyLabel('Belgeler birleştiriliyor...');
       const result = await mergeDocuments(selectedIds);
       await loadDocuments();
       clearSelection();
@@ -802,8 +1224,89 @@ export function DocumentsScreen() {
       );
     } finally {
       setBusy(false);
+      setBusyLabel(null);
     }
   }, [clearSelection, loadDocuments, navigation, selectedIds]);
+
+  const handleBatchOcr = useCallback(async () => {
+    await runBatchOcr({
+      targetDocuments: eligibleBatchDocuments,
+      skippedDocuments: skippedBatchDocuments,
+      title: 'Toplu OCR çıkar',
+    });
+  }, [eligibleBatchDocuments, runBatchOcr, skippedBatchDocuments]);
+
+  const handleBatchPdfExport = useCallback(async () => {
+    await runBatchPdfExport({
+      targetDocuments: eligibleBatchDocuments,
+      skippedDocuments: skippedBatchDocuments,
+      title: 'Toplu PDF üret',
+    });
+  }, [eligibleBatchDocuments, runBatchPdfExport, skippedBatchDocuments]);
+
+  const handleRetrySelectedFailedOcr = useCallback(async () => {
+    await runBatchOcr({
+      targetDocuments: retryableSelectedFailedDocuments,
+      skippedDocuments: [],
+      title: 'Başarısız OCR işlemlerini yeniden dene',
+    });
+  }, [retryableSelectedFailedDocuments, runBatchOcr]);
+
+  const handleSelectFailedVisibleDocuments = useCallback(() => {
+    setSelectedDocumentIds(failedVisibleDocuments.map((item) => item.id));
+  }, [failedVisibleDocuments, setSelectedDocumentIds]);
+
+  const handleRetryFailedVisibleOcr = useCallback(async () => {
+    await runBatchOcr({
+      targetDocuments: failedVisibleDocuments,
+      skippedDocuments: [],
+      title: 'Filtredeki başarısız OCR işlemlerini yeniden dene',
+      clearSelectionAfter: false,
+    });
+  }, [failedVisibleDocuments, runBatchOcr]);
+
+  const handleSelectBatchRetryDocuments = useCallback(() => {
+    if (!batchResult?.retryDocumentIds.length) {
+      return;
+    }
+
+    setSelectedDocumentIds(batchResult.retryDocumentIds);
+  }, [batchResult, setSelectedDocumentIds]);
+
+  const handleRetryBatchResult = useCallback(async () => {
+    if (!batchResult?.retryDocumentIds.length) {
+      return;
+    }
+
+    const retryDocuments = documents.filter((item) =>
+      batchResult.retryDocumentIds.includes(item.id),
+    );
+
+    if (!retryDocuments.length) {
+      return;
+    }
+
+    if (batchResult.key === 'ocr') {
+      await runBatchOcr({
+        targetDocuments: retryDocuments.filter((item) => item.page_count > 0),
+        skippedDocuments: retryDocuments.filter((item) => item.page_count <= 0),
+        title: 'Başarısız toplu OCR işlemlerini yeniden dene',
+      });
+      return;
+    }
+
+    await runBatchPdfExport({
+      targetDocuments: retryDocuments.filter((item) => item.page_count > 0),
+      skippedDocuments: retryDocuments.filter((item) => item.page_count <= 0),
+      title: 'Başarısız toplu PDF işlemlerini yeniden dene',
+    });
+  }, [batchResult, documents, runBatchOcr, runBatchPdfExport]);
+
+  const batchPdfButtonLabel = !billingHydrated
+    ? 'Toplu PDF'
+    : capabilities.canExportPdf
+      ? 'Toplu PDF'
+      : 'Toplu PDF (Premium)';
 
   return (
     <Screen
@@ -868,6 +1371,16 @@ export function DocumentsScreen() {
             label="OCR"
             selected={filter === 'ocr'}
             onPress={() => setFilter('ocr')}
+          />
+          <FilterChip
+            label="İşleniyor"
+            selected={filter === 'processing'}
+            onPress={() => setFilter('processing')}
+          />
+          <FilterChip
+            label="Hata"
+            selected={filter === 'failed'}
+            onPress={() => setFilter('failed')}
           />
           <FilterChip
             label="PDF"
@@ -937,17 +1450,166 @@ export function DocumentsScreen() {
         <StatCard label="Toplam sayfa" value={totalPages} icon="layers-outline" />
         <StatCard label="Taslak" value={draftCount} icon="create-outline" />
         <StatCard label="PDF hazır" value={pdfCount || readyCount} icon="document-outline" />
+        <StatCard label="İşleniyor" value={processingCount} icon="hourglass-outline" />
+        <StatCard label="OCR hata" value={failedOcrCount} icon="alert-circle-outline" />
         <StatCard label="Favori" value={favoriteCount} icon="star-outline" />
       </View>
+
+      {!selectionMode && failedVisibleDocuments.length > 0 ? (
+        <View style={styles.recoveryCard}>
+          <View style={styles.recoveryHeader}>
+            <View style={styles.recoveryIconWrap}>
+              <Ionicons name="refresh-outline" size={18} color="#FBBF24" />
+            </View>
+            <View style={styles.recoveryTextWrap}>
+              <Text style={styles.recoveryTitle}>Başarısız OCR kayıtları var</Text>
+              <Text style={styles.recoveryText}>
+                Bu filtrede {failedVisibleDocuments.length} belge OCR hatası verdi.
+                İstersen seçip toplu tekrar deneyebilirsin.
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.recoveryActions}>
+            <Pressable
+              onPress={handleSelectFailedVisibleDocuments}
+              style={({ pressed }) => [
+                styles.secondaryButtonCompact,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={styles.secondaryButtonCompactText}>Başarısızları seç</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => void handleRetryFailedVisibleOcr()}
+              disabled={busy}
+              style={({ pressed }) => [
+                styles.primaryButtonCompact,
+                pressed && !busy && styles.pressed,
+                busy && styles.selectionActionButtonDisabled,
+              ]}
+            >
+              <Text style={styles.primaryButtonCompactText}>Tekrar dene</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+
+      {batchResult ? (
+        <View style={styles.batchResultCard}>
+          <View style={styles.batchResultHeader}>
+            <View>
+              <Text style={styles.batchResultTitle}>{batchResult.title}</Text>
+              <Text style={styles.batchResultMeta}>
+                {formatDate(batchResult.completedAt)}
+              </Text>
+            </View>
+
+            <Pressable
+              onPress={() => setBatchResult(null)}
+              style={({ pressed }) => [pressed && styles.pressed]}
+            >
+              <Ionicons name="close-outline" size={20} color={colors.textTertiary} />
+            </Pressable>
+          </View>
+
+          <Text style={styles.batchResultText}>
+            {formatBatchSummaryText(batchResult)}
+          </Text>
+
+          {batchResult.retryDocumentIds.length > 0 ? (
+            <View style={styles.batchResultActions}>
+              <Pressable
+                onPress={handleSelectBatchRetryDocuments}
+                style={({ pressed }) => [
+                  styles.secondaryButtonCompact,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={styles.secondaryButtonCompactText}>Başarısızları seç</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => void handleRetryBatchResult()}
+                disabled={busy}
+                style={({ pressed }) => [
+                  styles.primaryButtonCompact,
+                  pressed && !busy && styles.pressed,
+                  busy && styles.selectionActionButtonDisabled,
+                ]}
+              >
+                <Text style={styles.primaryButtonCompactText}>Yeniden dene</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
 
       {selectionMode ? (
         <View style={styles.selectionToolbar}>
           <View style={styles.selectionToolbarHeader}>
             <Text style={styles.selectionToolbarTitle}>Seçim modu</Text>
-            <Text style={styles.selectionToolbarHint}>{selectedIds.length} belge seçildi</Text>
+            <Text style={styles.selectionToolbarHint}>
+              {selectedIds.length} belge seçildi • OCR/PDF uygun: {eligibleBatchDocuments.length}
+            </Text>
           </View>
 
           <View style={styles.selectionToolbarActions}>
+            <Pressable
+              onPress={() => void handleBatchOcr()}
+              disabled={busy || eligibleBatchDocuments.length === 0}
+              style={({ pressed }) => [
+                styles.selectionActionButton,
+                pressed && !busy && eligibleBatchDocuments.length > 0 && styles.pressed,
+                (busy || eligibleBatchDocuments.length === 0) &&
+                  styles.selectionActionButtonDisabled,
+              ]}
+            >
+              <Ionicons name="scan-outline" size={16} color={colors.textSecondary} />
+              <Text style={styles.selectionActionButtonText}>Toplu OCR</Text>
+            </Pressable>
+
+            {retryableSelectedFailedDocuments.length > 0 ? (
+              <Pressable
+                onPress={() => void handleRetrySelectedFailedOcr()}
+                disabled={busy}
+                style={({ pressed }) => [
+                  styles.selectionActionButton,
+                  pressed && !busy && styles.pressed,
+                  busy && styles.selectionActionButtonDisabled,
+                ]}
+              >
+                <Ionicons name="refresh-outline" size={16} color="#FBBF24" />
+                <Text style={styles.selectionActionButtonText}>Hatalı OCR’yi tekrar dene</Text>
+              </Pressable>
+            ) : null}
+
+            <Pressable
+              onPress={() => void handleBatchPdfExport()}
+              disabled={busy || !billingHydrated || eligibleBatchDocuments.length === 0}
+              style={({ pressed }) => [
+                styles.selectionActionButton,
+                pressed && !busy && billingHydrated && eligibleBatchDocuments.length > 0 && styles.pressed,
+                (busy || !billingHydrated || eligibleBatchDocuments.length === 0) &&
+                  styles.selectionActionButtonDisabled,
+              ]}
+            >
+              <Ionicons
+                name="document-outline"
+                size={16}
+                color={capabilities.canExportPdf ? colors.textSecondary : colors.primary}
+              />
+              <Text
+                style={[
+                  styles.selectionActionButtonText,
+                  !capabilities.canExportPdf && styles.selectionActionButtonTextAccent,
+                ]}
+              >
+                {batchPdfButtonLabel}
+              </Text>
+            </Pressable>
+
             <Pressable
               onPress={() => void handleBulkFavorite(true)}
               disabled={busy}
@@ -1111,7 +1773,7 @@ export function DocumentsScreen() {
       {busy ? (
         <View style={styles.busyRow}>
           <ActivityIndicator size="small" color={colors.primary} />
-          <Text style={styles.busyText}>İşlem uygulanıyor...</Text>
+          <Text style={styles.busyText}>{busyLabel ?? 'İşlem uygulanıyor...'}</Text>
         </View>
       ) : null}
 
@@ -1311,6 +1973,109 @@ const styles = StyleSheet.create({
     ...Typography.titleSmall,
     color: colors.text,
   },
+  recoveryCard: {
+    backgroundColor: colors.card,
+    borderColor: 'rgba(245, 158, 11, 0.28)',
+    borderWidth: 1,
+    borderRadius: Radius.xl,
+    padding: Spacing.lg,
+    marginBottom: Spacing.lg,
+    gap: Spacing.md,
+    ...Shadows.sm,
+  },
+  recoveryHeader: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    alignItems: 'flex-start',
+  },
+  recoveryIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(245, 158, 11, 0.14)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recoveryTextWrap: {
+    flex: 1,
+    gap: 4,
+  },
+  recoveryTitle: {
+    ...Typography.titleSmall,
+    color: colors.text,
+  },
+  recoveryText: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
+  },
+  recoveryActions: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+  },
+  batchResultCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: Radius.xl,
+    padding: Spacing.lg,
+    marginBottom: Spacing.lg,
+    gap: Spacing.md,
+    ...Shadows.sm,
+  },
+  batchResultHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: Spacing.md,
+    alignItems: 'flex-start',
+  },
+  batchResultTitle: {
+    ...Typography.titleSmall,
+    color: colors.text,
+  },
+  batchResultMeta: {
+    ...Typography.bodySmall,
+    color: colors.textTertiary,
+  },
+  batchResultText: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 21,
+  },
+  batchResultActions: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+  },
+  primaryButtonCompact: {
+    flex: 1,
+    minHeight: 40,
+    borderRadius: Radius.lg,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.md,
+  },
+  primaryButtonCompactText: {
+    color: colors.onPrimary,
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  secondaryButtonCompact: {
+    flex: 1,
+    minHeight: 40,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.md,
+  },
+  secondaryButtonCompactText: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 13,
+  },
   selectionToolbar: {
     backgroundColor: colors.card,
     borderColor: colors.border,
@@ -1353,6 +2118,9 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontWeight: '700',
     fontSize: 14,
+  },
+  selectionActionButtonTextAccent: {
+    color: colors.primary,
   },
   taxonomyManagerCard: {
     gap: Spacing.sm,
@@ -1593,6 +2361,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(148, 163, 184, 0.12)',
     borderColor: 'rgba(148, 163, 184, 0.22)',
   },
+  statusBadgeDanger: {
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    borderColor: 'rgba(239, 68, 68, 0.24)',
+  },
   statusBadgeText: {
     fontSize: 11,
     fontWeight: '800',
@@ -1607,6 +2379,9 @@ const styles = StyleSheet.create({
   },
   statusBadgeTextMuted: {
     color: colors.textSecondary,
+  },
+  statusBadgeTextDanger: {
+    color: '#F87171',
   },
   inlineMiniBadge: {
     borderRadius: 999,
