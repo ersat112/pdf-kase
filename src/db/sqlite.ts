@@ -1,7 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 
 const DB_NAME = 'pdf_kase.db';
-const DB_VERSION = 7;
+const DB_VERSION = 8;
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -226,6 +226,31 @@ async function migrateToVersion7(db: SQLite.SQLiteDatabase) {
   `);
 }
 
+async function migrateToVersion8(db: SQLite.SQLiteDatabase) {
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS document_action_audit_logs (
+      id INTEGER PRIMARY KEY NOT NULL,
+      document_id INTEGER NOT NULL,
+      action_key TEXT NOT NULL,
+      action_label TEXT NOT NULL,
+      status TEXT NOT NULL,
+      reason TEXT,
+      metadata TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_document_action_audit_logs_document_created_at
+      ON document_action_audit_logs(document_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_document_action_audit_logs_status_created_at
+      ON document_action_audit_logs(status, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_document_action_audit_logs_action_key_created_at
+      ON document_action_audit_logs(action_key, created_at DESC);
+  `);
+}
+
 async function runMigrations(db: SQLite.SQLiteDatabase) {
   await applyBasePragmas(db);
 
@@ -260,6 +285,10 @@ async function runMigrations(db: SQLite.SQLiteDatabase) {
 
   if (currentVersion < 7) {
     await migrateToVersion7(db);
+  }
+
+  if (currentVersion < 8) {
+    await migrateToVersion8(db);
   }
 
   if (currentVersion !== DB_VERSION) {
