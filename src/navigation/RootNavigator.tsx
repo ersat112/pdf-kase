@@ -8,7 +8,7 @@ import { LoginScreen } from '../screens/auth/LoginScreen';
 import { RegisterScreen } from '../screens/auth/RegisterScreen';
 import { SplashGateScreen } from '../screens/auth/SplashGateScreen';
 import { PricingScreen } from '../screens/billing/PricingScreen';
-import { DocumentScreen as DocumentDetailScreen } from '../screens/documents/DocumentDetailScreen';
+import { DocumentDetailScreen } from '../screens/documents/DocumentDetailScreen';
 import { DocumentsScreen } from '../screens/documents/DocumentsScreen';
 import { PdfEditorScreen } from '../screens/editor/PdfEditorScreen';
 import { ScanEntryScreen } from '../screens/scan/ScanEntryScreen';

@@ -1,6 +1,6 @@
-// src/screens/documents/DocumentScreen.tsx
+// src/screens/documents/DocumentDetailScreen.tsx
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -9,27 +9,30 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 
 import { Screen } from '../../components/common/Screen';
+import { LocalTrustBadge } from '../../components/trust/LocalTrustBadge';
+import type {
+  DocumentAuditEntry,
+  DocumentAuditStatus,
+} from '../../modules/documents/document-audit.service';
 import {
-  addTagToDocuments,
-  listDocumentCollections,
-  listDocumentTags,
-  setDocumentsCollection,
-  type DocumentCollectionSummary,
-  type DocumentTagSummary,
-} from '../../modules/documents/document-taxonomy.service';
+  listDocumentAuditEvents,
+  logDocumentAuditEvent,
+} from '../../modules/documents/document-audit.service';
 import {
-  getRecentDocuments,
-  mergeDocuments,
-  renameDocumentTitle,
+  exportDocumentToExcel,
+  exportDocumentToPdf,
+  exportDocumentToWord,
+  extractDocumentText,
+  getDocumentDetail,
   setDocumentFavorite,
-  setDocumentsFavorite,
-  type DocumentSummary,
+  translateDocumentTextToTurkish,
+  type DocumentDetail,
 } from '../../modules/documents/document.service';
+import type { RootScreenProps } from '../../navigation/types';
 import {
   Radius,
   Shadows,
@@ -38,54 +41,34 @@ import {
   colors,
 } from '../../theme';
 
-type FilterKey = 'all' | 'draft' | 'ready' | 'ocr' | 'pdf' | 'favorite';
+type ActionKey =
+  | 'favorite'
+  | 'editor'
+  | 'ocr'
+  | 'pdf'
+  | 'word'
+  | 'excel'
+  | 'translate';
 
-function isFavorite(item: DocumentSummary) {
-  return item.is_favorite === 1;
+type TranslationPreview = {
+  text: string;
+  translatedAt: string;
+  sourceLanguage: string | null;
+};
+
+function isFavorite(document: DocumentDetail) {
+  return document.is_favorite === 1;
 }
 
-function getStatusLabel(item: DocumentSummary) {
-  if (item.pdf_path && item.status === 'ready') {
-    return 'PDF Hazır';
+function formatDateTime(value: string | null | undefined) {
+  if (!value) {
+    return 'Yok';
   }
 
-  if (item.ocr_status === 'ready') {
-    return 'OCR Hazır';
-  }
-
-  switch (item.status) {
-    case 'draft':
-      return 'Taslak';
-    case 'ready':
-      return 'Hazır';
-    case 'exported':
-      return 'PDF Oluşturuldu';
-    default:
-      return item.status;
-  }
-}
-
-function getStatusTone(item: DocumentSummary) {
-  if (item.pdf_path && item.status === 'ready') {
-    return 'success';
-  }
-
-  if (item.ocr_status === 'ready') {
-    return 'accent';
-  }
-
-  if (item.status === 'draft') {
-    return 'muted';
-  }
-
-  return 'default';
-}
-
-function formatDate(value: string) {
   const parsed = new Date(value);
 
   if (Number.isNaN(parsed.getTime())) {
-    return 'Tarih yok';
+    return 'Yok';
   }
 
   return parsed.toLocaleString('tr-TR', {
@@ -96,1047 +79,798 @@ function formatDate(value: string) {
   });
 }
 
-function matchesFilter(item: DocumentSummary, filter: FilterKey) {
-  switch (filter) {
+function getDocumentStatusLabel(document: DocumentDetail) {
+  if (document.pdf_path && document.status === 'ready') {
+    return 'PDF Hazır';
+  }
+
+  if (document.ocr_status === 'ready') {
+    return 'OCR Hazır';
+  }
+
+  switch (document.status) {
     case 'draft':
-      return item.status === 'draft';
+      return 'Taslak';
     case 'ready':
-      return item.status === 'ready';
-    case 'ocr':
-      return item.ocr_status === 'ready';
-    case 'pdf':
-      return Boolean(item.pdf_path);
-    case 'favorite':
-      return isFavorite(item);
-    case 'all':
+      return 'Hazır';
+    case 'exported':
+      return 'PDF Oluşturuldu';
     default:
-      return true;
+      return document.status;
   }
 }
 
-function FilterChip({
-  label,
-  selected,
-  onPress,
-}: {
-  label: string;
-  selected: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.filterChip,
-        selected && styles.filterChipSelected,
-        pressed && styles.pressed,
-      ]}
-    >
-      <Text
-        style={[
-          styles.filterChipText,
-          selected && styles.filterChipTextSelected,
-        ]}
-      >
-        {label}
-      </Text>
-    </Pressable>
-  );
+function getDocumentStatusTone(document: DocumentDetail) {
+  if (document.pdf_path && document.status === 'ready') {
+    return 'success' as const;
+  }
+
+  if (document.ocr_status === 'ready') {
+    return 'accent' as const;
+  }
+
+  if (document.status === 'draft') {
+    return 'muted' as const;
+  }
+
+  return 'default' as const;
 }
 
-function TaxonomyChip({
-  label,
-  selected,
-  onPress,
-}: {
-  label: string;
-  selected: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.taxonomyChip,
-        selected && styles.taxonomyChipSelected,
-        pressed && styles.pressed,
-      ]}
-    >
-      <Text
-        style={[
-          styles.taxonomyChipText,
-          selected && styles.taxonomyChipTextSelected,
-        ]}
-      >
-        {label}
-      </Text>
-    </Pressable>
-  );
+function getAuditStatusLabel(status: DocumentAuditStatus) {
+  switch (status) {
+    case 'started':
+      return 'Başladı';
+    case 'completed':
+      return 'Tamamlandı';
+    case 'failed':
+      return 'Hata';
+    case 'requires_premium':
+      return 'Premium gerekli';
+    default:
+      return status;
+  }
 }
 
-function StatCard({
+function getAuditStatusTone(status: DocumentAuditStatus) {
+  switch (status) {
+    case 'completed':
+      return 'success' as const;
+    case 'failed':
+      return 'danger' as const;
+    case 'requires_premium':
+      return 'warning' as const;
+    case 'started':
+      return 'accent' as const;
+    default:
+      return 'default' as const;
+  }
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message.trim().length > 0
+    ? error.message
+    : fallback;
+}
+
+function InfoBadge({
   label,
-  value,
+  tone = 'default',
   icon,
 }: {
   label: string;
-  value: string | number;
-  icon: React.ComponentProps<typeof Ionicons>['name'];
+  tone?: 'default' | 'success' | 'accent' | 'muted' | 'danger' | 'warning';
+  icon?: React.ComponentProps<typeof Ionicons>['name'];
 }) {
-  return (
-    <View style={styles.statCard}>
-      <View style={styles.statIconWrap}>
-        <Ionicons name={icon} size={18} color={colors.primary} />
-      </View>
-
-      <View style={styles.statTextWrap}>
-        <Text style={styles.statValue}>{value}</Text>
-        <Text style={styles.statLabel}>{label}</Text>
-      </View>
-    </View>
-  );
-}
-
-function EmptyState({
-  onCreate,
-  onImport,
-}: {
-  onCreate: () => void;
-  onImport: () => void;
-}) {
-  return (
-    <View style={styles.emptyCard}>
-      <View style={styles.emptyIconWrap}>
-        <Ionicons
-          name="document-text-outline"
-          size={28}
-          color={colors.textTertiary}
-        />
-      </View>
-
-      <Text style={styles.emptyTitle}>Henüz belge yok</Text>
-      <Text style={styles.emptyText}>
-        İlk taramayı başlatabilir veya PDF / görsel dosyalarını içe aktararak
-        belge havuzunu oluşturabilirsin.
-      </Text>
-
-      <View style={styles.emptyActionRow}>
-        <Pressable
-          onPress={onCreate}
-          style={({ pressed }) => [
-            styles.primaryButton,
-            pressed && styles.pressed,
-          ]}
-        >
-          <Text style={styles.primaryButtonText}>Yeni tarama</Text>
-        </Pressable>
-
-        <Pressable
-          onPress={onImport}
-          style={({ pressed }) => [
-            styles.secondaryButton,
-            pressed && styles.pressed,
-          ]}
-        >
-          <Text style={styles.secondaryButtonText}>PDF içe aktar</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
-function StatusBadge({ item }: { item: DocumentSummary }) {
-  const tone = getStatusTone(item);
-
   return (
     <View
       style={[
-        styles.statusBadge,
-        tone === 'success' && styles.statusBadgeSuccess,
-        tone === 'accent' && styles.statusBadgeAccent,
-        tone === 'muted' && styles.statusBadgeMuted,
+        styles.infoBadge,
+        tone === 'success' && styles.infoBadgeSuccess,
+        tone === 'accent' && styles.infoBadgeAccent,
+        tone === 'muted' && styles.infoBadgeMuted,
+        tone === 'danger' && styles.infoBadgeDanger,
+        tone === 'warning' && styles.infoBadgeWarning,
       ]}
     >
+      {icon ? (
+        <Ionicons
+          name={icon}
+          size={12}
+          color={
+            tone === 'success'
+              ? colors.primary
+              : tone === 'accent'
+              ? '#60A5FA'
+              : tone === 'danger'
+              ? '#F87171'
+              : tone === 'warning'
+              ? '#FBBF24'
+              : colors.textSecondary
+          }
+        />
+      ) : null}
       <Text
         style={[
-          styles.statusBadgeText,
-          tone === 'success' && styles.statusBadgeTextSuccess,
-          tone === 'accent' && styles.statusBadgeTextAccent,
-          tone === 'muted' && styles.statusBadgeTextMuted,
+          styles.infoBadgeText,
+          tone === 'success' && styles.infoBadgeTextSuccess,
+          tone === 'accent' && styles.infoBadgeTextAccent,
+          tone === 'muted' && styles.infoBadgeTextMuted,
+          tone === 'danger' && styles.infoBadgeTextDanger,
+          tone === 'warning' && styles.infoBadgeTextWarning,
         ]}
       >
-        {getStatusLabel(item)}
+        {label}
       </Text>
     </View>
   );
 }
 
-function DocumentCard({
-  item,
-  selectionMode,
-  selected,
-  renameOpen,
-  renameValue,
-  onChangeRenameValue,
-  onSubmitRename,
-  onCancelRename,
-  onOpen,
-  onLongPress,
-  onToggleFavorite,
+function ActionButton({
+  icon,
+  label,
+  caption,
+  disabled,
+  loading,
+  onPress,
 }: {
-  item: DocumentSummary;
-  selectionMode: boolean;
-  selected: boolean;
-  renameOpen: boolean;
-  renameValue: string;
-  onChangeRenameValue: (value: string) => void;
-  onSubmitRename: () => void;
-  onCancelRename: () => void;
-  onOpen: () => void;
-  onLongPress: () => void;
-  onToggleFavorite: () => void;
+  icon: React.ComponentProps<typeof Ionicons>['name'];
+  label: string;
+  caption: string;
+  disabled?: boolean;
+  loading?: boolean;
+  onPress: () => void;
 }) {
-  const favorite = isFavorite(item);
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled || loading}
+      style={({ pressed }) => [
+        styles.actionButton,
+        pressed && !(disabled || loading) && styles.pressed,
+        (disabled || loading) && styles.actionButtonDisabled,
+      ]}
+    >
+      <View style={styles.actionButtonIconWrap}>
+        {loading ? (
+          <ActivityIndicator size="small" color={colors.primary} />
+        ) : (
+          <Ionicons name={icon} size={18} color={colors.primary} />
+        )}
+      </View>
+
+      <View style={styles.actionButtonTextWrap}>
+        <Text style={styles.actionButtonLabel}>{label}</Text>
+        <Text style={styles.actionButtonCaption}>{caption}</Text>
+      </View>
+
+      <Ionicons
+        name="chevron-forward"
+        size={18}
+        color={colors.textTertiary}
+      />
+    </Pressable>
+  );
+}
+
+function AuditRow({ item }: { item: DocumentAuditEntry }) {
+  const tone = getAuditStatusTone(item.status);
 
   return (
-    <View style={styles.card}>
-      <Pressable
-        onPress={onOpen}
-        onLongPress={onLongPress}
-        delayLongPress={220}
-        style={({ pressed }) => [
-          styles.cardMainPressable,
-          pressed && styles.pressed,
-        ]}
-      >
-        <View style={styles.thumbnailFrame}>
-          {item.thumbnail_path ? (
-            <Image source={{ uri: item.thumbnail_path }} style={styles.thumbnail} />
-          ) : (
-            <View style={styles.thumbnailPlaceholder}>
-              <Ionicons
-                name="document-text-outline"
-                size={22}
-                color={colors.textTertiary}
-              />
-              <Text style={styles.thumbnailPlaceholderText}>Önizleme yok</Text>
-            </View>
-          )}
+    <View style={styles.auditRow}>
+      <View style={styles.auditRowTop}>
+        <Text style={styles.auditRowTitle}>{item.action_label}</Text>
+        <InfoBadge label={getAuditStatusLabel(item.status)} tone={tone} />
+      </View>
 
-          {selected ? (
-            <View style={styles.selectionBadge}>
-              <Ionicons name="checkmark-circle" size={18} color={colors.primary} />
-            </View>
-          ) : null}
-        </View>
+      <Text style={styles.auditRowMeta}>{formatDateTime(item.created_at)}</Text>
 
-        <View style={styles.cardContent}>
-          <View style={styles.cardTopRow}>
-            <View style={styles.cardTitleWrap}>
-              <Text numberOfLines={2} style={styles.cardTitle}>
-                {item.title}
-              </Text>
-
-              <View style={styles.cardMetaRow}>
-                <Text style={styles.cardMeta}>Sayfa: {item.page_count}</Text>
-                <Text style={styles.cardMetaDot}>•</Text>
-                <Text style={styles.cardMeta}>{formatDate(item.updated_at)}</Text>
-              </View>
-            </View>
-
-            <Ionicons
-              name={selectionMode ? 'checkmark-done-outline' : 'chevron-forward'}
-              size={20}
-              color={selected ? colors.primary : colors.textTertiary}
-            />
-          </View>
-
-          <View style={styles.cardBottomRow}>
-            <StatusBadge item={item} />
-
-            {favorite ? (
-              <View style={styles.favoriteMiniBadge}>
-                <Ionicons name="star" size={12} color={colors.primary} />
-                <Text style={styles.favoriteMiniBadgeText}>Favori</Text>
-              </View>
-            ) : null}
-
-            {item.collection_name ? (
-              <View style={styles.inlineMiniBadge}>
-                <Text style={styles.inlineMiniBadgeText}>
-                  {item.collection_name}
-                </Text>
-              </View>
-            ) : null}
-
-            {item.tag_names.slice(0, 2).map((tag) => (
-              <View key={tag} style={styles.inlineMiniBadge}>
-                <Text style={styles.inlineMiniBadgeText}>#{tag}</Text>
-              </View>
-            ))}
-
-            {item.word_path ? (
-              <View style={styles.inlineMiniBadge}>
-                <Text style={styles.inlineMiniBadgeText}>WORD</Text>
-              </View>
-            ) : null}
-
-            {item.pdf_path ? (
-              <View style={styles.inlineMiniBadge}>
-                <Text style={styles.inlineMiniBadgeText}>PDF</Text>
-              </View>
-            ) : null}
-          </View>
-        </View>
-      </Pressable>
-
-      {!selectionMode ? (
-        <View style={styles.cardActionRow}>
-          <Pressable
-            onPress={onToggleFavorite}
-            style={({ pressed }) => [
-              styles.inlineActionButton,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Ionicons
-              name={favorite ? 'star' : 'star-outline'}
-              size={16}
-              color={favorite ? colors.primary : colors.textSecondary}
-            />
-            <Text style={styles.inlineActionButtonText}>
-              {favorite ? 'Favoriden çıkar' : 'Favori yap'}
-            </Text>
-          </Pressable>
-        </View>
-      ) : null}
-
-      {renameOpen ? (
-        <View style={styles.renameCard}>
-          <Text style={styles.renameTitle}>Belge adını düzenle</Text>
-
-          <TextInput
-            value={renameValue}
-            onChangeText={onChangeRenameValue}
-            placeholder="Belge adı"
-            placeholderTextColor={colors.textTertiary}
-            style={styles.renameInput}
-            autoFocus
-            maxLength={120}
-          />
-
-          <View style={styles.renameActions}>
-            <Pressable
-              onPress={onCancelRename}
-              style={({ pressed }) => [
-                styles.renameSecondaryButton,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text style={styles.renameSecondaryButtonText}>Vazgeç</Text>
-            </Pressable>
-
-            <Pressable
-              onPress={onSubmitRename}
-              style={({ pressed }) => [
-                styles.renamePrimaryButton,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text style={styles.renamePrimaryButtonText}>Kaydet</Text>
-            </Pressable>
-          </View>
-        </View>
+      {item.reason ? (
+        <Text style={styles.auditRowReason}>{item.reason}</Text>
       ) : null}
     </View>
   );
 }
 
-export function DocumentScreen() {
-  const navigation = useNavigation<any>();
+export function DocumentDetailScreen({
+  navigation,
+  route,
+}: RootScreenProps<'DocumentDetail'>) {
+  const documentId = route.params.documentId;
 
-  const [documents, setDocuments] = useState<DocumentSummary[]>([]);
-  const [collections, setCollections] = useState<DocumentCollectionSummary[]>([]);
-  const [tags, setTags] = useState<DocumentTagSummary[]>([]);
+  const [document, setDocument] = useState<DocumentDetail | null>(null);
+  const [auditEntries, setAuditEntries] = useState<DocumentAuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<FilterKey>('all');
-  const [selectedCollectionName, setSelectedCollectionName] = useState<string | null>(null);
-  const [selectedTagName, setSelectedTagName] = useState<string | null>(null);
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
-  const [renameTargetId, setRenameTargetId] = useState<number | null>(null);
-  const [renameValue, setRenameValue] = useState('');
-  const [collectionInput, setCollectionInput] = useState('');
-  const [tagInput, setTagInput] = useState('');
+  const [activeActionKey, setActiveActionKey] = useState<ActionKey | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [translationPreview, setTranslationPreview] =
+    useState<TranslationPreview | null>(null);
 
-  const loadDocuments = useCallback(async () => {
-    try {
-      setLoading(true);
+  const loadData = useCallback(
+    async (showLoading = true) => {
+      try {
+        if (showLoading) {
+          setLoading(true);
+        }
 
-      const [documentRows, collectionRows, tagRows] = await Promise.all([
-        getRecentDocuments(100),
-        listDocumentCollections(),
-        listDocumentTags(),
-      ]);
+        setErrorMessage(null);
 
-      setDocuments(documentRows);
-      setCollections(collectionRows);
-      setTags(tagRows);
-    } catch (error) {
-      console.warn('[Documents] Load failed:', error);
-      setDocuments([]);
-      setCollections([]);
-      setTags([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+        const [documentDetail, audits] = await Promise.all([
+          getDocumentDetail(documentId),
+          listDocumentAuditEvents(documentId, 12),
+        ]);
+
+        setDocument(documentDetail);
+        setAuditEntries(audits);
+      } catch (error) {
+        console.warn('[DocumentDetail] Load failed:', error);
+        setDocument(null);
+        setAuditEntries([]);
+        setErrorMessage(
+          getErrorMessage(error, 'Belge detayı yüklenemedi.'),
+        );
+      } finally {
+        if (showLoading) {
+          setLoading(false);
+        }
+      }
+    },
+    [documentId],
+  );
 
   useFocusEffect(
     useCallback(() => {
-      void loadDocuments();
-    }, [loadDocuments]),
+      void loadData(true);
+    }, [loadData]),
   );
 
   useEffect(() => {
-    setSelectedIds((current) =>
-      current.filter((id) => documents.some((item) => item.id === id)),
-    );
+    setTranslationPreview(null);
+  }, [documentId]);
 
-    if (
-      renameTargetId !== null &&
-      !documents.some((item) => item.id === renameTargetId)
-    ) {
-      setRenameTargetId(null);
-      setRenameValue('');
-    }
-
-    if (
-      selectedCollectionName &&
-      !collections.some((item) => item.name === selectedCollectionName)
-    ) {
-      setSelectedCollectionName(null);
-    }
-
-    if (
-      selectedTagName &&
-      !tags.some((item) => item.name === selectedTagName)
-    ) {
-      setSelectedTagName(null);
-    }
-  }, [collections, documents, renameTargetId, selectedCollectionName, selectedTagName, tags]);
-
-  const selectionMode = selectedIds.length > 0;
-
-  const filteredDocuments = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase('tr-TR');
-
-    return [...documents]
-      .filter((item) => {
-        if (!matchesFilter(item, filter)) {
-          return false;
-        }
-
-        if (
-          selectedCollectionName &&
-          item.collection_name !== selectedCollectionName
-        ) {
-          return false;
-        }
-
-        if (
-          selectedTagName &&
-          !item.tag_names.some((tag) => tag === selectedTagName)
-        ) {
-          return false;
-        }
-
-        if (!normalizedQuery) {
-          return true;
-        }
-
-        const haystack = [
-          item.title,
-          item.status,
-          item.ocr_status,
-          getStatusLabel(item),
-          item.collection_name ?? '',
-          ...item.tag_names,
-          isFavorite(item) ? 'favori' : '',
-        ]
-          .join(' ')
-          .toLocaleLowerCase('tr-TR');
-
-        return haystack.includes(normalizedQuery);
-      })
-      .sort((left, right) => {
-        const favoriteDelta = Number(isFavorite(right)) - Number(isFavorite(left));
-
-        if (favoriteDelta !== 0) {
-          return favoriteDelta;
-        }
-
-        return new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
-      });
-  }, [documents, filter, query, selectedCollectionName, selectedTagName]);
-
-  const totalPages = useMemo(() => {
-    return documents.reduce((sum, item) => sum + item.page_count, 0);
-  }, [documents]);
-
-  const draftCount = useMemo(() => {
-    return documents.filter((item) => item.status === 'draft').length;
-  }, [documents]);
-
-  const readyCount = useMemo(() => {
-    return documents.filter((item) => item.status === 'ready').length;
-  }, [documents]);
-
-  const pdfCount = useMemo(() => {
-    return documents.filter((item) => Boolean(item.pdf_path)).length;
-  }, [documents]);
-
-  const favoriteCount = useMemo(() => {
-    return documents.filter((item) => isFavorite(item)).length;
-  }, [documents]);
-
-  const selectedDocuments = useMemo(() => {
-    return documents.filter((item) => selectedIds.includes(item.id));
-  }, [documents, selectedIds]);
-
-  const singleSelectedDocument = selectedDocuments.length === 1 ? selectedDocuments[0] : null;
-
-  const clearSelection = useCallback(() => {
-    setSelectedIds([]);
-    setRenameTargetId(null);
-    setRenameValue('');
-    setCollectionInput('');
-    setTagInput('');
-  }, []);
-
-  const toggleSelectedId = useCallback((documentId: number) => {
-    setSelectedIds((current) =>
-      current.includes(documentId)
-        ? current.filter((value) => value !== documentId)
-        : [...current, documentId],
-    );
-  }, []);
-
-  const handleCardPress = useCallback(
-    (item: DocumentSummary) => {
-      if (selectionMode) {
-        toggleSelectedId(item.id);
-        return;
-      }
-
-      navigation.navigate('DocumentDetail', {
-        documentId: item.id,
-      });
-    },
-    [navigation, selectionMode, toggleSelectedId],
-  );
-
-  const handleCardLongPress = useCallback(
-    (item: DocumentSummary) => {
-      setRenameTargetId(null);
-      setRenameValue('');
-      toggleSelectedId(item.id);
-    },
-    [toggleSelectedId],
-  );
-
-  const handleToggleFavorite = useCallback(
-    async (item: DocumentSummary) => {
-      try {
-        setBusy(true);
-        await setDocumentFavorite(item.id, !isFavorite(item));
-        await loadDocuments();
-      } catch (error) {
-        Alert.alert(
-          'Hata',
-          error instanceof Error ? error.message : 'Favori durumu güncellenemedi.',
-        );
-      } finally {
-        setBusy(false);
-      }
-    },
-    [loadDocuments],
-  );
-
-  const handleBulkFavorite = useCallback(
-    async (nextFavorite: boolean) => {
-      if (!selectedIds.length) {
-        return;
-      }
-
-      try {
-        setBusy(true);
-        await setDocumentsFavorite(selectedIds, nextFavorite);
-        await loadDocuments();
-        clearSelection();
-      } catch (error) {
-        Alert.alert(
-          'Hata',
-          error instanceof Error ? error.message : 'Toplu favori işlemi başarısız.',
-        );
-      } finally {
-        setBusy(false);
-      }
-    },
-    [clearSelection, loadDocuments, selectedIds],
-  );
-
-  const handleAssignCollection = useCallback(
-    async (collectionName: string | null) => {
-      if (!selectedIds.length) {
-        return;
-      }
-
-      try {
-        setBusy(true);
-        await setDocumentsCollection(selectedIds, collectionName);
-        await loadDocuments();
-        setCollectionInput('');
-      } catch (error) {
-        Alert.alert(
-          'Hata',
-          error instanceof Error ? error.message : 'Klasör atama başarısız.',
-        );
-      } finally {
-        setBusy(false);
-      }
-    },
-    [loadDocuments, selectedIds],
-  );
-
-  const handleAddTag = useCallback(
-    async (tagName: string) => {
-      if (!selectedIds.length) {
-        return;
-      }
-
-      try {
-        setBusy(true);
-        await addTagToDocuments(selectedIds, tagName);
-        await loadDocuments();
-        setTagInput('');
-      } catch (error) {
-        Alert.alert(
-          'Hata',
-          error instanceof Error ? error.message : 'Etiket eklenemedi.',
-        );
-      } finally {
-        setBusy(false);
-      }
-    },
-    [loadDocuments, selectedIds],
-  );
-
-  const handleOpenRename = useCallback(() => {
-    if (!singleSelectedDocument) {
+  useEffect(() => {
+    if (!document) {
       return;
     }
 
-    setRenameTargetId(singleSelectedDocument.id);
-    setRenameValue(singleSelectedDocument.title);
-  }, [singleSelectedDocument]);
+    navigation.setOptions({
+      title: document.title,
+    });
+  }, [document, navigation]);
 
-  const handleCancelRename = useCallback(() => {
-    setRenameTargetId(null);
-    setRenameValue('');
-  }, []);
+  const pageCount = document?.pages.length ?? 0;
+  const hasPageBasedDocument = pageCount > 0;
+  const statusTone = document ? getDocumentStatusTone(document) : 'default';
+  const favorite = useMemo(
+    () => (document ? isFavorite(document) : false),
+    [document],
+  );
 
-  const handleSubmitRename = useCallback(async () => {
-    if (!renameTargetId) {
+  const safeLogAudit = useCallback(
+    async ({
+      actionKey,
+      actionLabel,
+      status,
+      reason,
+      metadata,
+    }: {
+      actionKey: string;
+      actionLabel: string;
+      status: DocumentAuditStatus;
+      reason?: string | null;
+      metadata?: Record<string, unknown> | null;
+    }) => {
+      try {
+        await logDocumentAuditEvent({
+          documentId,
+          actionKey,
+          actionLabel,
+          status,
+          reason,
+          metadata,
+        });
+      } catch (error) {
+        console.warn('[DocumentDetail] Audit log failed:', error);
+      }
+    },
+    [documentId],
+  );
+
+  const runAuditedAction = useCallback(
+    async <T,>({
+      actionKey,
+      actionLabel,
+      run,
+      successMessage,
+      successMetadata,
+      onSuccess,
+    }: {
+      actionKey: Exclude<ActionKey, 'favorite' | 'editor'>;
+      actionLabel: string;
+      run: () => Promise<T>;
+      successMessage: (result: T) => string;
+      successMetadata?: (result: T) => Record<string, unknown> | null;
+      onSuccess?: (result: T) => void | Promise<void>;
+    }) => {
+      setActiveActionKey(actionKey);
+
+      await safeLogAudit({
+        actionKey,
+        actionLabel,
+        status: 'started',
+      });
+
+      try {
+        const result = await run();
+
+        await safeLogAudit({
+          actionKey,
+          actionLabel,
+          status: 'completed',
+          metadata: successMetadata ? successMetadata(result) : null,
+        });
+
+        if (onSuccess) {
+          await onSuccess(result);
+        }
+
+        await loadData(false);
+        Alert.alert('Tamamlandı', successMessage(result));
+      } catch (error) {
+        const message = getErrorMessage(
+          error,
+          'İşlem sırasında beklenmeyen hata oluştu.',
+        );
+
+        await safeLogAudit({
+          actionKey,
+          actionLabel,
+          status: 'failed',
+          reason: message,
+        });
+
+        await loadData(false);
+        Alert.alert('İşlem başarısız', message);
+      } finally {
+        setActiveActionKey(null);
+      }
+    },
+    [loadData, safeLogAudit],
+  );
+
+  const handleToggleFavorite = useCallback(async () => {
+    if (!document) {
       return;
     }
+
+    const nextFavorite = !isFavorite(document);
+    setActiveActionKey('favorite');
 
     try {
-      setBusy(true);
-      await renameDocumentTitle(renameTargetId, renameValue);
-      await loadDocuments();
-      setRenameTargetId(null);
-      setRenameValue('');
-      clearSelection();
+      await setDocumentFavorite(document.id, nextFavorite);
+      await loadData(false);
     } catch (error) {
       Alert.alert(
         'Hata',
-        error instanceof Error ? error.message : 'Belge adı güncellenemedi.',
+        getErrorMessage(error, 'Favori durumu güncellenemedi.'),
       );
     } finally {
-      setBusy(false);
+      setActiveActionKey(null);
     }
-  }, [clearSelection, loadDocuments, renameTargetId, renameValue]);
+  }, [document, loadData]);
 
-  const handleMergeDocuments = useCallback(async () => {
-    if (selectedIds.length < 2) {
+  const handleOpenEditor = useCallback(() => {
+    if (!document || !hasPageBasedDocument) {
       return;
     }
 
-    try {
-      setBusy(true);
-      const result = await mergeDocuments(selectedIds);
-      await loadDocuments();
-      clearSelection();
+    navigation.navigate('PdfEditor', {
+      documentId: document.id,
+    });
+  }, [document, hasPageBasedDocument, navigation]);
 
-      Alert.alert(
-        'Belgeler birleştirildi',
-        `${result.sourceDocumentCount} belge, ${result.mergedPageCount} sayfa olarak yeni kayda dönüştürüldü.`,
-      );
-
-      navigation.navigate('DocumentDetail', {
-        documentId: result.documentId,
-      });
-    } catch (error) {
-      Alert.alert(
-        'Hata',
-        error instanceof Error ? error.message : 'Belgeler birleştirilemedi.',
-      );
-    } finally {
-      setBusy(false);
+  const handleRunOcr = useCallback(async () => {
+    if (!document || !hasPageBasedDocument) {
+      return;
     }
-  }, [clearSelection, loadDocuments, navigation, selectedIds]);
+
+    await runAuditedAction({
+      actionKey: 'ocr',
+      actionLabel: 'OCR çıkar',
+      run: () => extractDocumentText(document.id),
+      successMessage: (result) =>
+        `${result.extractedPageCount} sayfadan metin çıkarıldı.`,
+      successMetadata: (result) => ({
+        extractedPageCount: result.extractedPageCount,
+        extractedCharacterCount: result.extractedCharacterCount,
+      }),
+    });
+  }, [document, hasPageBasedDocument, runAuditedAction]);
+
+  const handleExportPdf = useCallback(async () => {
+    if (!document || !hasPageBasedDocument) {
+      return;
+    }
+
+    await runAuditedAction({
+      actionKey: 'pdf',
+      actionLabel: 'PDF üret',
+      run: () => exportDocumentToPdf(document.id),
+      successMessage: () => 'PDF çıktısı oluşturuldu.',
+      successMetadata: (result) => ({
+        fileName: result.fileName,
+      }),
+    });
+  }, [document, hasPageBasedDocument, runAuditedAction]);
+
+  const handleExportWord = useCallback(async () => {
+    if (!document || !hasPageBasedDocument) {
+      return;
+    }
+
+    await runAuditedAction({
+      actionKey: 'word',
+      actionLabel: 'Word dışa aktar',
+      run: () => exportDocumentToWord(document.id),
+      successMessage: (result) => `${result.fileName} hazır.`,
+      successMetadata: (result) => ({
+        fileName: result.fileName,
+        textLength: result.textLength,
+      }),
+    });
+  }, [document, hasPageBasedDocument, runAuditedAction]);
+
+  const handleExportExcel = useCallback(async () => {
+    if (!document || !hasPageBasedDocument) {
+      return;
+    }
+
+    await runAuditedAction({
+      actionKey: 'excel',
+      actionLabel: 'Excel dışa aktar',
+      run: () => exportDocumentToExcel(document.id),
+      successMessage: (result) => `${result.fileName} hazır.`,
+      successMetadata: (result) => ({
+        fileName: result.fileName,
+        textLength: result.textLength,
+      }),
+    });
+  }, [document, hasPageBasedDocument, runAuditedAction]);
+
+  const handleTranslate = useCallback(async () => {
+    if (!document || !hasPageBasedDocument) {
+      return;
+    }
+
+    await runAuditedAction({
+      actionKey: 'translate',
+      actionLabel: 'Türkçeye çevir',
+      run: () => translateDocumentTextToTurkish(document.id),
+      successMessage: () => 'Türkçe çeviri hazır.',
+      successMetadata: (result) => ({
+        sourceLanguage: result.sourceLanguage,
+        translatedLength: result.translatedText.length,
+      }),
+      onSuccess: (result) => {
+        setTranslationPreview({
+          text: result.translatedText,
+          translatedAt: result.translatedAt,
+          sourceLanguage: result.sourceLanguage,
+        });
+      },
+    });
+  }, [document, hasPageBasedDocument, runAuditedAction]);
 
   return (
     <Screen
-      title="Dosyalar"
-      subtitle="Belgelerini ara, filtrele ve kaldığın yerden devam et."
+      title="Belge Detayı"
+      subtitle="Belgeyi incele, devam et ve son işlemleri yönet."
     >
-      <View style={styles.heroCard}>
-        <View style={styles.heroTopRow}>
-          <View style={styles.heroTextWrap}>
-            <Text style={styles.heroTitle}>Belge merkezi</Text>
-            <Text style={styles.heroText}>
-              Tüm taramalar, taslaklar, OCR hazır kayıtlar ve PDF çıktıları tek yerde.
-            </Text>
-          </View>
-
-          <Pressable
-            onPress={() => navigation.navigate('ScanEntry', { initialMode: 'camera' })}
-            style={({ pressed }) => [
-              styles.heroActionButton,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Ionicons name="scan-outline" size={18} color={colors.onPrimary} />
-            <Text style={styles.heroActionButtonText}>Yeni</Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.searchWrap}>
-          <Ionicons
-            name="search-outline"
-            size={18}
-            color={colors.textTertiary}
-          />
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Belge ara"
-            placeholderTextColor={colors.textTertiary}
-            style={styles.searchInput}
-          />
-        </View>
-
-        <View style={styles.filterRow}>
-          <FilterChip
-            label="Tümü"
-            selected={filter === 'all'}
-            onPress={() => setFilter('all')}
-          />
-          <FilterChip
-            label="Taslak"
-            selected={filter === 'draft'}
-            onPress={() => setFilter('draft')}
-          />
-          <FilterChip
-            label="Hazır"
-            selected={filter === 'ready'}
-            onPress={() => setFilter('ready')}
-          />
-          <FilterChip
-            label="OCR"
-            selected={filter === 'ocr'}
-            onPress={() => setFilter('ocr')}
-          />
-          <FilterChip
-            label="PDF"
-            selected={filter === 'pdf'}
-            onPress={() => setFilter('pdf')}
-          />
-          <FilterChip
-            label="Favori"
-            selected={filter === 'favorite'}
-            onPress={() => setFilter('favorite')}
-          />
-        </View>
-
-        {collections.length > 0 ? (
-          <View style={styles.taxonomySection}>
-            <Text style={styles.taxonomyLabel}>Klasör filtresi</Text>
-            <View style={styles.taxonomyRow}>
-              <TaxonomyChip
-                label="Tümü"
-                selected={selectedCollectionName === null}
-                onPress={() => setSelectedCollectionName(null)}
-              />
-              {collections.map((item) => (
-                <TaxonomyChip
-                  key={item.id}
-                  label={item.name}
-                  selected={selectedCollectionName === item.name}
-                  onPress={() =>
-                    setSelectedCollectionName((current) =>
-                      current === item.name ? null : item.name,
-                    )
-                  }
-                />
-              ))}
-            </View>
-          </View>
-        ) : null}
-
-        {tags.length > 0 ? (
-          <View style={styles.taxonomySection}>
-            <Text style={styles.taxonomyLabel}>Etiket filtresi</Text>
-            <View style={styles.taxonomyRow}>
-              <TaxonomyChip
-                label="Tümü"
-                selected={selectedTagName === null}
-                onPress={() => setSelectedTagName(null)}
-              />
-              {tags.slice(0, 10).map((item) => (
-                <TaxonomyChip
-                  key={item.id}
-                  label={`#${item.name}`}
-                  selected={selectedTagName === item.name}
-                  onPress={() =>
-                    setSelectedTagName((current) =>
-                      current === item.name ? null : item.name,
-                    )
-                  }
-                />
-              ))}
-            </View>
-          </View>
-        ) : null}
-      </View>
-
-      <View style={styles.statsGrid}>
-        <StatCard label="Toplam belge" value={documents.length} icon="folder-open-outline" />
-        <StatCard label="Toplam sayfa" value={totalPages} icon="layers-outline" />
-        <StatCard label="Taslak" value={draftCount} icon="create-outline" />
-        <StatCard label="PDF hazır" value={pdfCount || readyCount} icon="document-outline" />
-        <StatCard label="Favori" value={favoriteCount} icon="star-outline" />
-      </View>
-
-      {selectionMode ? (
-        <View style={styles.selectionToolbar}>
-          <View style={styles.selectionToolbarHeader}>
-            <Text style={styles.selectionToolbarTitle}>Seçim modu</Text>
-            <Text style={styles.selectionToolbarHint}>{selectedIds.length} belge seçildi</Text>
-          </View>
-
-          <View style={styles.selectionToolbarActions}>
-            <Pressable
-              onPress={() => void handleBulkFavorite(true)}
-              disabled={busy}
-              style={({ pressed }) => [
-                styles.selectionActionButton,
-                pressed && !busy && styles.pressed,
-                busy && styles.selectionActionButtonDisabled,
-              ]}
-            >
-              <Ionicons name="star" size={16} color={colors.primary} />
-              <Text style={styles.selectionActionButtonText}>Favori yap</Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => void handleBulkFavorite(false)}
-              disabled={busy}
-              style={({ pressed }) => [
-                styles.selectionActionButton,
-                pressed && !busy && styles.pressed,
-                busy && styles.selectionActionButtonDisabled,
-              ]}
-            >
-              <Ionicons name="star-outline" size={16} color={colors.textSecondary} />
-              <Text style={styles.selectionActionButtonText}>Favoriden çıkar</Text>
-            </Pressable>
-
-            {selectedIds.length >= 2 ? (
-              <Pressable
-                onPress={() => void handleMergeDocuments()}
-                disabled={busy}
-                style={({ pressed }) => [
-                  styles.selectionActionButton,
-                  pressed && !busy && styles.pressed,
-                  busy && styles.selectionActionButtonDisabled,
-                ]}
-              >
-                <Ionicons name="git-merge-outline" size={16} color={colors.textSecondary} />
-                <Text style={styles.selectionActionButtonText}>Birleştir</Text>
-              </Pressable>
-            ) : null}
-
-            {singleSelectedDocument ? (
-              <Pressable
-                onPress={handleOpenRename}
-                disabled={busy}
-                style={({ pressed }) => [
-                  styles.selectionActionButton,
-                  pressed && !busy && styles.pressed,
-                  busy && styles.selectionActionButtonDisabled,
-                ]}
-              >
-                <Ionicons name="pencil-outline" size={16} color={colors.textSecondary} />
-                <Text style={styles.selectionActionButtonText}>Yeniden adlandır</Text>
-              </Pressable>
-            ) : null}
-
-            <Pressable
-              onPress={clearSelection}
-              disabled={busy}
-              style={({ pressed }) => [
-                styles.selectionActionButton,
-                pressed && !busy && styles.pressed,
-                busy && styles.selectionActionButtonDisabled,
-              ]}
-            >
-              <Ionicons name="close-outline" size={16} color={colors.textSecondary} />
-              <Text style={styles.selectionActionButtonText}>Vazgeç</Text>
-            </Pressable>
-          </View>
-
-          <View style={styles.taxonomyManagerCard}>
-            <Text style={styles.taxonomyManagerTitle}>Klasör ata</Text>
-
-            <View style={styles.taxonomyInputRow}>
-              <TextInput
-                value={collectionInput}
-                onChangeText={setCollectionInput}
-                placeholder="Yeni klasör adı"
-                placeholderTextColor={colors.textTertiary}
-                style={styles.taxonomyInput}
-                maxLength={48}
-              />
-
-              <Pressable
-                onPress={() => void handleAssignCollection(collectionInput)}
-                disabled={busy}
-                style={({ pressed }) => [
-                  styles.taxonomyActionButton,
-                  pressed && !busy && styles.pressed,
-                  busy && styles.selectionActionButtonDisabled,
-                ]}
-              >
-                <Text style={styles.taxonomyActionButtonText}>Ata</Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.taxonomyRow}>
-              {collections.map((item) => (
-                <TaxonomyChip
-                  key={item.id}
-                  label={item.name}
-                  selected={false}
-                  onPress={() => void handleAssignCollection(item.name)}
-                />
-              ))}
-              <TaxonomyChip
-                label="Klasörü temizle"
-                selected={false}
-                onPress={() => void handleAssignCollection(null)}
-              />
-            </View>
-          </View>
-
-          <View style={styles.taxonomyManagerCard}>
-            <Text style={styles.taxonomyManagerTitle}>Etiket ekle</Text>
-
-            <View style={styles.taxonomyInputRow}>
-              <TextInput
-                value={tagInput}
-                onChangeText={setTagInput}
-                placeholder="Yeni etiket"
-                placeholderTextColor={colors.textTertiary}
-                style={styles.taxonomyInput}
-                maxLength={48}
-              />
-
-              <Pressable
-                onPress={() => void handleAddTag(tagInput)}
-                disabled={busy}
-                style={({ pressed }) => [
-                  styles.taxonomyActionButton,
-                  pressed && !busy && styles.pressed,
-                  busy && styles.selectionActionButtonDisabled,
-                ]}
-              >
-                <Text style={styles.taxonomyActionButtonText}>Ekle</Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.taxonomyRow}>
-              {tags.slice(0, 10).map((item) => (
-                <TaxonomyChip
-                  key={item.id}
-                  label={`#${item.name}`}
-                  selected={false}
-                  onPress={() => void handleAddTag(item.name)}
-                />
-              ))}
-            </View>
-          </View>
-        </View>
-      ) : null}
-
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Belge listesi</Text>
-        <Text style={styles.sectionHint}>
-          {loading ? 'Yükleniyor' : `${filteredDocuments.length} kayıt`}
-        </Text>
-      </View>
-
-      {busy ? (
-        <View style={styles.busyRow}>
-          <ActivityIndicator size="small" color={colors.primary} />
-          <Text style={styles.busyText}>İşlem uygulanıyor...</Text>
-        </View>
-      ) : null}
-
       {loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.loadingText}>Belgeler yükleniyor...</Text>
+          <Text style={styles.loadingText}>Belge detayı yükleniyor...</Text>
         </View>
-      ) : filteredDocuments.length === 0 ? (
-        <EmptyState
-          onCreate={() => navigation.navigate('ScanEntry', { initialMode: 'camera' })}
-          onImport={() =>
-            navigation.navigate('ScanEntry', { initialMode: 'import-files' })
-          }
-        />
-      ) : (
-        <View style={styles.list}>
-          {filteredDocuments.map((item) => (
-            <DocumentCard
-              key={item.id}
-              item={item}
-              selectionMode={selectionMode}
-              selected={selectedIds.includes(item.id)}
-              renameOpen={renameTargetId === item.id}
-              renameValue={renameTargetId === item.id ? renameValue : ''}
-              onChangeRenameValue={setRenameValue}
-              onSubmitRename={() => void handleSubmitRename()}
-              onCancelRename={handleCancelRename}
-              onOpen={() => handleCardPress(item)}
-              onLongPress={() => handleCardLongPress(item)}
-              onToggleFavorite={() => void handleToggleFavorite(item)}
+      ) : errorMessage || !document ? (
+        <View style={styles.errorCard}>
+          <View style={styles.errorIconWrap}>
+            <Ionicons
+              name="alert-circle-outline"
+              size={24}
+              color="#F87171"
             />
-          ))}
+          </View>
+          <Text style={styles.errorTitle}>Belge açılamadı</Text>
+          <Text style={styles.errorText}>
+            {errorMessage ?? 'Belge kaydı bulunamadı.'}
+          </Text>
+
+          <Pressable
+            onPress={() => void loadData(true)}
+            style={({ pressed }) => [
+              styles.primaryButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={styles.primaryButtonText}>Tekrar dene</Text>
+          </Pressable>
         </View>
+      ) : (
+        <>
+          <View style={styles.heroCard}>
+            <View style={styles.heroHeader}>
+              <View style={styles.thumbnailFrame}>
+                {document.thumbnail_path ? (
+                  <Image
+                    source={{ uri: document.thumbnail_path }}
+                    style={styles.thumbnail}
+                  />
+                ) : (
+                  <View style={styles.thumbnailPlaceholder}>
+                    <Ionicons
+                      name="document-text-outline"
+                      size={26}
+                      color={colors.textTertiary}
+                    />
+                    <Text style={styles.thumbnailPlaceholderText}>
+                      Önizleme yok
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              <View style={styles.heroContent}>
+                <View style={styles.heroTitleRow}>
+                  <Text style={styles.heroTitle}>{document.title}</Text>
+
+                  <Pressable
+                    onPress={() => void handleToggleFavorite()}
+                    disabled={activeActionKey !== null}
+                    style={({ pressed }) => [
+                      styles.favoriteButton,
+                      pressed && activeActionKey === null && styles.pressed,
+                      activeActionKey !== null && styles.actionButtonDisabled,
+                    ]}
+                  >
+                    {activeActionKey === 'favorite' ? (
+                      <ActivityIndicator size="small" color={colors.primary} />
+                    ) : (
+                      <Ionicons
+                        name={favorite ? 'star' : 'star-outline'}
+                        size={18}
+                        color={favorite ? colors.primary : colors.textSecondary}
+                      />
+                    )}
+                  </Pressable>
+                </View>
+
+                <Text style={styles.heroMeta}>
+                  Güncellendi: {formatDateTime(document.updated_at)}
+                </Text>
+
+                <View style={styles.badgeRow}>
+                  <InfoBadge
+                    label={getDocumentStatusLabel(document)}
+                    tone={statusTone}
+                  />
+                  <InfoBadge
+                    label={`${pageCount} sayfa`}
+                    tone="default"
+                    icon="layers-outline"
+                  />
+                  <InfoBadge label="LOCAL" tone="muted" icon="shield-checkmark-outline" />
+                  {favorite ? (
+                    <InfoBadge label="Favori" tone="success" icon="star" />
+                  ) : null}
+                  {document.word_path ? (
+                    <InfoBadge label="WORD Hazır" tone="accent" />
+                  ) : null}
+                  {document.collection_name ? (
+                    <InfoBadge label={document.collection_name} tone="default" />
+                  ) : null}
+                  {document.tag_names.map((tag) => (
+                    <InfoBadge key={tag} label={`#${tag}`} tone="default" />
+                  ))}
+                </View>
+              </View>
+            </View>
+
+            <LocalTrustBadge />
+
+            {!hasPageBasedDocument ? (
+              <View style={styles.noticeCard}>
+                <View style={styles.noticeIconWrap}>
+                  <Ionicons
+                    name="information-circle-outline"
+                    size={18}
+                    color="#60A5FA"
+                  />
+                </View>
+                <View style={styles.noticeTextWrap}>
+                  <Text style={styles.noticeTitle}>Dışarıdan PDF kayıt</Text>
+                  <Text style={styles.noticeText}>
+                    Bu kayıt dışarıdan PDF olarak içe aktarılmış. Sayfa bazlı
+                    düzenleme, OCR ve yeniden export v1 akışı için sayfa tabanlı
+                    belge gerekiyor.
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+          </View>
+
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Hızlı işlemler</Text>
+            {activeActionKey ? (
+              <Text style={styles.sectionHint}>İşlem sürüyor</Text>
+            ) : (
+              <Text style={styles.sectionHint}>Tek dokunuşla devam et</Text>
+            )}
+          </View>
+
+          <View style={styles.actionList}>
+            <ActionButton
+              icon="create-outline"
+              label="Editörde aç"
+              caption="Kaşe, imza ve sayfa düzenine devam et"
+              disabled={!hasPageBasedDocument || activeActionKey !== null}
+              loading={activeActionKey === 'editor'}
+              onPress={handleOpenEditor}
+            />
+            <ActionButton
+              icon="scan-outline"
+              label="OCR çıkar"
+              caption="Sayfalardaki metni algıla"
+              disabled={!hasPageBasedDocument || activeActionKey !== null}
+              loading={activeActionKey === 'ocr'}
+              onPress={() => void handleRunOcr()}
+            />
+            <ActionButton
+              icon="document-outline"
+              label="PDF üret"
+              caption="Güncel sayfalardan PDF oluştur"
+              disabled={!hasPageBasedDocument || activeActionKey !== null}
+              loading={activeActionKey === 'pdf'}
+              onPress={() => void handleExportPdf()}
+            />
+            <ActionButton
+              icon="document-text-outline"
+              label="Word dışa aktar"
+              caption="OCR metnini Word olarak hazırla"
+              disabled={!hasPageBasedDocument || activeActionKey !== null}
+              loading={activeActionKey === 'word'}
+              onPress={() => void handleExportWord()}
+            />
+            <ActionButton
+              icon="grid-outline"
+              label="Excel dışa aktar"
+              caption="OCR metnini Excel olarak hazırla"
+              disabled={!hasPageBasedDocument || activeActionKey !== null}
+              loading={activeActionKey === 'excel'}
+              onPress={() => void handleExportExcel()}
+            />
+            <ActionButton
+              icon="language-outline"
+              label="Türkçeye çevir"
+              caption="Algılanan metni Türkçeye çevir"
+              disabled={!hasPageBasedDocument || activeActionKey !== null}
+              loading={activeActionKey === 'translate'}
+              onPress={() => void handleTranslate()}
+            />
+          </View>
+
+          {document.ocr_status === 'failed' && document.ocr_error ? (
+            <View style={styles.resultCard}>
+              <View style={styles.resultHeader}>
+                <Text style={styles.resultTitle}>OCR hatası</Text>
+                <InfoBadge label="Hata" tone="danger" />
+              </View>
+              <Text style={styles.resultText}>{document.ocr_error}</Text>
+            </View>
+          ) : null}
+
+          {document.ocr_text ? (
+            <View style={styles.resultCard}>
+              <View style={styles.resultHeader}>
+                <Text style={styles.resultTitle}>OCR önizleme</Text>
+                <InfoBadge
+                  label={document.ocr_status === 'ready' ? 'Hazır' : 'Bekliyor'}
+                  tone={document.ocr_status === 'ready' ? 'success' : 'muted'}
+                />
+              </View>
+              <Text style={styles.resultMeta}>
+                OCR güncelleme: {formatDateTime(document.ocr_updated_at)}
+              </Text>
+              <Text style={styles.resultText} numberOfLines={8}>
+                {document.ocr_text}
+              </Text>
+            </View>
+          ) : null}
+
+          {translationPreview ? (
+            <View style={styles.resultCard}>
+              <View style={styles.resultHeader}>
+                <Text style={styles.resultTitle}>Türkçe çeviri önizleme</Text>
+                <InfoBadge label="Hazır" tone="accent" />
+              </View>
+              <Text style={styles.resultMeta}>
+                Kaynak dil: {translationPreview.sourceLanguage ?? 'Bilinmiyor'} •{' '}
+                {formatDateTime(translationPreview.translatedAt)}
+              </Text>
+              <Text style={styles.resultText} numberOfLines={10}>
+                {translationPreview.text}
+              </Text>
+            </View>
+          ) : null}
+
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Sayfalar</Text>
+            <Text style={styles.sectionHint}>
+              {hasPageBasedDocument ? `${pageCount} kayıt` : 'Sayfa yok'}
+            </Text>
+          </View>
+
+          {!hasPageBasedDocument ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>Sayfa önizlemesi yok</Text>
+              <Text style={styles.emptyText}>
+                Bu belge sayfa tabanlı değil. Düzenleme akışı için kamera veya
+                görsel tabanlı belge kullan.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.pageList}>
+              {document.pages.map((page, index) => (
+                <Pressable
+                  key={page.id}
+                  onPress={handleOpenEditor}
+                  disabled={activeActionKey !== null}
+                  style={({ pressed }) => [
+                    styles.pageCard,
+                    pressed && activeActionKey === null && styles.pressed,
+                  ]}
+                >
+                  <Image
+                    source={{ uri: page.image_path }}
+                    style={styles.pageThumbnail}
+                  />
+
+                  <View style={styles.pageContent}>
+                    <Text style={styles.pageTitle}>Sayfa {index + 1}</Text>
+                    <Text style={styles.pageMeta}>
+                      Sıra: {page.page_order + 1}
+                    </Text>
+                  </View>
+
+                  <Ionicons
+                    name="chevron-forward"
+                    size={18}
+                    color={colors.textTertiary}
+                  />
+                </Pressable>
+              ))}
+            </View>
+          )}
+
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Son işlemler</Text>
+            <Text style={styles.sectionHint}>{auditEntries.length} kayıt</Text>
+          </View>
+
+          {auditEntries.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>Henüz işlem geçmişi yok</Text>
+              <Text style={styles.emptyText}>
+                OCR, export veya çeviri çalıştırdığında burada son işlemler
+                görünecek.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.auditList}>
+              {auditEntries.map((item) => (
+                <AuditRow key={item.id} item={item} />
+              ))}
+            </View>
+          )}
+        </>
       )}
     </Screen>
   );
@@ -1149,243 +883,151 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: Radius.xl,
     padding: Spacing.lg,
-    marginBottom: Spacing.lg,
     gap: Spacing.md,
+    marginBottom: Spacing.lg,
     ...Shadows.sm,
   },
-  heroTopRow: {
+  heroHeader: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
     gap: Spacing.md,
+    alignItems: 'flex-start',
   },
-  heroTextWrap: {
+  thumbnailFrame: {
+    width: 96,
+    height: 128,
+    borderRadius: Radius.lg,
+    overflow: 'hidden',
+    backgroundColor: '#0F141B',
+  },
+  thumbnail: {
+    width: '100%',
+    height: '100%',
+  },
+  thumbnailPlaceholder: {
     flex: 1,
-    gap: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 8,
+  },
+  thumbnailPlaceholderText: {
+    color: colors.textTertiary,
+    fontSize: 11,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  heroContent: {
+    flex: 1,
+    gap: 8,
+  },
+  heroTitleRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    alignItems: 'flex-start',
   },
   heroTitle: {
+    flex: 1,
     ...Typography.titleLarge,
     color: colors.text,
+    lineHeight: 28,
   },
-  heroText: {
-    ...Typography.body,
-    color: colors.textSecondary,
-    lineHeight: 22,
-  },
-  heroActionButton: {
-    minHeight: 42,
-    borderRadius: Radius.lg,
-    backgroundColor: colors.primary,
-    paddingHorizontal: Spacing.md,
-    flexDirection: 'row',
+  favoriteButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  heroMeta: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
   },
-  heroActionButtonText: {
-    color: colors.onPrimary,
-    fontWeight: '800',
-    fontSize: 14,
-  },
-  searchWrap: {
-    minHeight: 48,
-    backgroundColor: colors.surfaceElevated,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: Radius.lg,
-    paddingHorizontal: Spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-  },
-  searchInput: {
-    flex: 1,
-    minHeight: 48,
-    color: colors.text,
-    ...Typography.body,
-  },
-  filterRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Spacing.sm,
-  },
-  filterChip: {
-    minHeight: 34,
-    paddingHorizontal: Spacing.md,
+  infoBadge: {
+    minHeight: 30,
     borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surfaceElevated,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  filterChipSelected: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  filterChipText: {
-    ...Typography.bodySmall,
-    color: colors.text,
-    fontWeight: '700',
-  },
-  filterChipTextSelected: {
-    color: colors.onPrimary,
-  },
-  taxonomySection: {
-    gap: Spacing.sm,
-  },
-  taxonomyLabel: {
-    ...Typography.bodySmall,
-    color: colors.textSecondary,
-    fontWeight: '800',
-  },
-  taxonomyRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Spacing.sm,
-  },
-  taxonomyChip: {
-    minHeight: 32,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceElevated,
-    paddingHorizontal: Spacing.md,
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 6,
   },
-  taxonomyChipSelected: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primaryMuted,
+  infoBadgeSuccess: {
+    backgroundColor: 'rgba(53, 199, 111, 0.12)',
+    borderColor: 'rgba(53, 199, 111, 0.28)',
   },
-  taxonomyChipText: {
-    ...Typography.bodySmall,
+  infoBadgeAccent: {
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+    borderColor: 'rgba(59, 130, 246, 0.28)',
+  },
+  infoBadgeMuted: {
+    backgroundColor: 'rgba(148, 163, 184, 0.12)',
+    borderColor: 'rgba(148, 163, 184, 0.22)',
+  },
+  infoBadgeDanger: {
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    borderColor: 'rgba(239, 68, 68, 0.24)',
+  },
+  infoBadgeWarning: {
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderColor: 'rgba(245, 158, 11, 0.24)',
+  },
+  infoBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
     color: colors.textSecondary,
-    fontWeight: '700',
+    textTransform: 'uppercase',
   },
-  taxonomyChipTextSelected: {
+  infoBadgeTextSuccess: {
     color: colors.primary,
   },
-  statsGrid: {
-    gap: Spacing.sm,
-    marginBottom: Spacing.lg,
+  infoBadgeTextAccent: {
+    color: '#60A5FA',
   },
-  statCard: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: Radius.lg,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-    ...Shadows.sm,
-  },
-  statIconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: colors.surfaceElevated,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  statTextWrap: {
-    flex: 1,
-    gap: 2,
-  },
-  statLabel: {
-    ...Typography.bodySmall,
+  infoBadgeTextMuted: {
     color: colors.textSecondary,
   },
-  statValue: {
-    ...Typography.titleSmall,
-    color: colors.text,
+  infoBadgeTextDanger: {
+    color: '#F87171',
   },
-  selectionToolbar: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: Radius.xl,
-    padding: Spacing.lg,
-    marginBottom: Spacing.lg,
-    gap: Spacing.md,
-    ...Shadows.sm,
+  infoBadgeTextWarning: {
+    color: '#FBBF24',
   },
-  selectionToolbarHeader: {
-    gap: 4,
-  },
-  selectionToolbarTitle: {
-    ...Typography.titleSmall,
-    color: colors.text,
-  },
-  selectionToolbarHint: {
-    ...Typography.bodySmall,
-    color: colors.textSecondary,
-  },
-  selectionToolbarActions: {
-    gap: Spacing.sm,
-  },
-  selectionActionButton: {
-    minHeight: 42,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceElevated,
-    paddingHorizontal: Spacing.md,
+  noticeCard: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  selectionActionButtonDisabled: {
-    opacity: 0.6,
-  },
-  selectionActionButtonText: {
-    color: colors.text,
-    fontWeight: '700',
-    fontSize: 14,
-  },
-  taxonomyManagerCard: {
     gap: Spacing.sm,
-    backgroundColor: colors.surfaceElevated,
-    borderColor: colors.border,
-    borderWidth: 1,
     borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(59, 130, 246, 0.24)',
+    backgroundColor: 'rgba(59, 130, 246, 0.08)',
     padding: Spacing.md,
   },
-  taxonomyManagerTitle: {
-    ...Typography.bodySmall,
-    color: colors.text,
-    fontWeight: '800',
+  noticeIconWrap: {
+    paddingTop: 2,
   },
-  taxonomyInputRow: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-    alignItems: 'center',
-  },
-  taxonomyInput: {
+  noticeTextWrap: {
     flex: 1,
-    minHeight: 44,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
+    gap: 4,
+  },
+  noticeTitle: {
     color: colors.text,
-    paddingHorizontal: Spacing.md,
-    ...Typography.body,
-  },
-  taxonomyActionButton: {
-    minHeight: 44,
-    borderRadius: Radius.lg,
-    backgroundColor: colors.primary,
-    paddingHorizontal: Spacing.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  taxonomyActionButtonText: {
-    color: colors.onPrimary,
     fontWeight: '800',
     fontSize: 14,
+  },
+  noticeText: {
+    color: colors.textSecondary,
+    lineHeight: 20,
+    fontSize: 13,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -1402,26 +1044,165 @@ const styles = StyleSheet.create({
     ...Typography.bodySmall,
     color: colors.textTertiary,
   },
-  busyRow: {
+  actionList: {
+    gap: Spacing.sm,
+    marginBottom: Spacing.lg,
+  },
+  actionButton: {
+    minHeight: 64,
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.sm,
-    marginBottom: Spacing.md,
+    gap: Spacing.md,
+    ...Shadows.sm,
   },
-  busyText: {
+  actionButtonDisabled: {
+    opacity: 0.6,
+  },
+  actionButtonIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionButtonTextWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  actionButtonLabel: {
+    color: colors.text,
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  actionButtonCaption: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  resultCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: Radius.xl,
+    padding: Spacing.lg,
+    gap: Spacing.sm,
+    marginBottom: Spacing.lg,
+    ...Shadows.sm,
+  },
+  resultHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.md,
+  },
+  resultTitle: {
+    ...Typography.titleSmall,
+    color: colors.text,
+  },
+  resultMeta: {
     ...Typography.bodySmall,
     color: colors.textSecondary,
-    fontWeight: '700',
   },
-  loadingContainer: {
+  resultText: {
+    color: colors.text,
+    lineHeight: 22,
+  },
+  pageList: {
+    gap: Spacing.sm,
+    marginBottom: Spacing.lg,
+  },
+  pageCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: Radius.xl,
+    padding: Spacing.md,
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 40,
-    gap: 10,
+    gap: Spacing.md,
+    ...Shadows.sm,
   },
-  loadingText: {
+  pageThumbnail: {
+    width: 54,
+    height: 72,
+    borderRadius: Radius.md,
+    backgroundColor: '#0F141B',
+  },
+  pageContent: {
+    flex: 1,
+    gap: 4,
+  },
+  pageTitle: {
+    color: colors.text,
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  pageMeta: {
     color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  auditList: {
+    gap: Spacing.sm,
+  },
+  auditRow: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: Radius.xl,
+    padding: Spacing.md,
+    gap: 6,
+    ...Shadows.sm,
+  },
+  auditRowTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: Spacing.md,
+  },
+  auditRowTitle: {
+    flex: 1,
+    color: colors.text,
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  auditRowMeta: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  auditRowReason: {
+    color: colors.textSecondary,
+    lineHeight: 20,
+    fontSize: 13,
   },
   emptyCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: Radius.xl,
+    padding: Spacing.xl,
+    gap: Spacing.sm,
+    marginBottom: Spacing.lg,
+    ...Shadows.sm,
+  },
+  emptyTitle: {
+    color: colors.text,
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  emptyText: {
+    color: colors.textSecondary,
+    lineHeight: 22,
+  },
+  errorCard: {
     backgroundColor: colors.card,
     borderColor: colors.border,
     borderWidth: 1,
@@ -1430,280 +1211,43 @@ const styles = StyleSheet.create({
     gap: Spacing.md,
     ...Shadows.sm,
   },
-  emptyIconWrap: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: colors.surfaceElevated,
+  errorIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  emptyTitle: {
+  errorTitle: {
     color: colors.text,
     fontSize: 18,
     fontWeight: '800',
   },
-  emptyText: {
+  errorText: {
     color: colors.textSecondary,
     lineHeight: 22,
   },
-  emptyActionRow: {
-    gap: Spacing.sm,
-  },
   primaryButton: {
-    backgroundColor: colors.primary,
+    minHeight: 46,
     borderRadius: Radius.lg,
-    paddingVertical: Spacing.md,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: Spacing.lg,
   },
   primaryButtonText: {
     color: colors.onPrimary,
-    textAlign: 'center',
     fontWeight: '800',
     fontSize: 15,
   },
-  secondaryButton: {
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.lg,
-  },
-  secondaryButtonText: {
-    color: colors.text,
-    textAlign: 'center',
-    fontWeight: '700',
-    fontSize: 15,
-  },
-  list: {
-    gap: Spacing.md,
-  },
-  card: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: Radius.xl,
-    overflow: 'hidden',
-    ...Shadows.sm,
-  },
-  cardMainPressable: {
-    padding: Spacing.md,
-    flexDirection: 'row',
-    gap: Spacing.md,
-  },
-  thumbnailFrame: {
-    width: 78,
-    height: 104,
-    borderRadius: Radius.lg,
-    overflow: 'hidden',
-    backgroundColor: '#0F141B',
-  },
-  thumbnail: {
-    width: '100%',
-    height: '100%',
-  },
-  selectionBadge: {
-    position: 'absolute',
-    top: 6,
-    right: 6,
-    backgroundColor: colors.card,
-    borderRadius: 999,
-  },
-  thumbnailPlaceholder: {
-    flex: 1,
+  loadingContainer: {
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingHorizontal: 6,
+    paddingVertical: 48,
+    gap: 10,
   },
-  thumbnailPlaceholderText: {
-    color: colors.textTertiary,
-    fontSize: 11,
-    textAlign: 'center',
-    fontWeight: '600',
-  },
-  cardContent: {
-    flex: 1,
-    justifyContent: 'space-between',
-    gap: Spacing.sm,
-  },
-  cardTopRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: Spacing.sm,
-  },
-  cardTitleWrap: {
-    flex: 1,
-    gap: 6,
-  },
-  cardTitle: {
-    color: colors.text,
-    fontSize: 16,
-    fontWeight: '800',
-    lineHeight: 22,
-  },
-  cardMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  cardMeta: {
+  loadingText: {
     color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  cardMetaDot: {
-    color: colors.textTertiary,
-    fontSize: 12,
-  },
-  cardBottomRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  statusBadge: {
-    borderRadius: 999,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceElevated,
-  },
-  statusBadgeSuccess: {
-    backgroundColor: 'rgba(53, 199, 111, 0.12)',
-    borderColor: 'rgba(53, 199, 111, 0.28)',
-  },
-  statusBadgeAccent: {
-    backgroundColor: 'rgba(59, 130, 246, 0.12)',
-    borderColor: 'rgba(59, 130, 246, 0.28)',
-  },
-  statusBadgeMuted: {
-    backgroundColor: 'rgba(148, 163, 184, 0.12)',
-    borderColor: 'rgba(148, 163, 184, 0.22)',
-  },
-  statusBadgeText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-  },
-  statusBadgeTextSuccess: {
-    color: colors.primary,
-  },
-  statusBadgeTextAccent: {
-    color: '#60A5FA',
-  },
-  statusBadgeTextMuted: {
-    color: colors.textSecondary,
-  },
-  inlineMiniBadge: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  inlineMiniBadgeText: {
-    color: colors.textTertiary,
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  favoriteMiniBadge: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: colors.border,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  favoriteMiniBadgeText: {
-    color: colors.primary,
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  cardActionRow: {
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-  },
-  inlineActionButton: {
-    minHeight: 36,
-    alignSelf: 'flex-start',
-    borderRadius: Radius.lg,
-    paddingHorizontal: Spacing.sm,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  inlineActionButtonText: {
-    color: colors.text,
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  renameCard: {
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    padding: Spacing.md,
-    gap: Spacing.sm,
-    backgroundColor: colors.surfaceElevated,
-  },
-  renameTitle: {
-    ...Typography.bodySmall,
-    color: colors.text,
-    fontWeight: '800',
-  },
-  renameInput: {
-    minHeight: 46,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    color: colors.text,
-    paddingHorizontal: Spacing.md,
-    ...Typography.body,
-  },
-  renameActions: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-  },
-  renamePrimaryButton: {
-    flex: 1,
-    minHeight: 42,
-    borderRadius: Radius.lg,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  renamePrimaryButtonText: {
-    color: colors.onPrimary,
-    fontWeight: '800',
-    fontSize: 14,
-  },
-  renameSecondaryButton: {
-    flex: 1,
-    minHeight: 42,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  renameSecondaryButtonText: {
-    color: colors.text,
-    fontWeight: '700',
-    fontSize: 14,
   },
   pressed: {
     opacity: 0.92,
