@@ -23,6 +23,7 @@ import {
 import { logDocumentAuditEvent } from '../../modules/documents/document-audit.service';
 import {
   buildDocumentCollectionOverview,
+  buildDocumentsRecoverySummary,
   resolveDocumentActionState,
   resolveDocumentIsFavorite,
   resolveDocumentPageCount,
@@ -683,6 +684,7 @@ export function DocumentsScreen() {
     );
   }, [filteredDocuments]);
 
+
   const singleSelectedDocument =
     selectedDocuments.length === 1 ? selectedDocuments[0] : null;
 
@@ -1211,6 +1213,30 @@ export function DocumentsScreen() {
     });
   }, [failedVisibleDocuments, runBatchOcr]);
 
+  const handleRetryFailedVisibleOcrPress = useCallback(() => {
+    void handleRetryFailedVisibleOcr();
+  }, [handleRetryFailedVisibleOcr]);
+
+  const recoverySummary = useMemo(
+    () =>
+      buildDocumentsRecoverySummary({
+        overview,
+        failedVisibleCount: failedVisibleDocuments.length,
+        filteredCount: filteredDocuments.length,
+        busy,
+        onSelectFailed: handleSelectFailedVisibleDocuments,
+        onRetryFailed: handleRetryFailedVisibleOcrPress,
+      }),
+    [
+      busy,
+      failedVisibleDocuments.length,
+      filteredDocuments.length,
+      handleRetryFailedVisibleOcrPress,
+      handleSelectFailedVisibleDocuments,
+      overview,
+    ],
+  );
+
   const handleSelectBatchRetryDocuments = useCallback(() => {
     if (!batchResult?.retryDocumentIds.length) {
       return;
@@ -1409,47 +1435,8 @@ export function DocumentsScreen() {
         <StatCard label="Favori" value={overview.favoriteCount} icon="star-outline" />
       </View>
 
-      {!selectionMode && failedVisibleDocuments.length > 0 ? (
-        <DocumentPipelineSummaryCard
-          title="OCR recovery"
-          subtitle="Başarısız belge işlemleri bu ekrandan toplu toparlanabilir."
-          message={`Bu filtrede ${failedVisibleDocuments.length} belge OCR hatası verdi. İstersen seçim moduna alıp toplu tekrar deneyebilirsin.`}
-          tone="warning"
-          icon="refresh-outline"
-          stats={[
-            {
-              label: `${failedVisibleDocuments.length} hata`,
-              tone: 'warning',
-              icon: 'alert-circle-outline',
-            },
-            {
-              label: `${overview.processingCount} işleniyor`,
-              tone: overview.processingCount > 0 ? 'accent' : 'muted',
-              icon: 'hourglass-outline',
-            },
-            {
-              label: `${filteredDocuments.length} görünür`,
-              tone: 'default',
-              icon: 'documents-outline',
-            },
-          ]}
-          actions={[
-            {
-              label: 'Başarısızları seç',
-              onPress: handleSelectFailedVisibleDocuments,
-              variant: 'secondary',
-              disabled: busy,
-            },
-            {
-              label: 'Tekrar dene',
-              onPress: () => {
-                void handleRetryFailedVisibleOcr();
-              },
-              variant: 'primary',
-              disabled: busy,
-            },
-          ]}
-        />
+      {!selectionMode && recoverySummary ? (
+        <DocumentPipelineSummaryCard {...recoverySummary} />
       ) : null}
 
       {batchResult ? (
@@ -1928,46 +1915,6 @@ const styles = StyleSheet.create({
   statValue: {
     ...Typography.titleSmall,
     color: colors.text,
-  },
-  recoveryCard: {
-    backgroundColor: colors.card,
-    borderColor: 'rgba(245, 158, 11, 0.28)',
-    borderWidth: 1,
-    borderRadius: Radius.xl,
-    padding: Spacing.lg,
-    marginBottom: Spacing.lg,
-    gap: Spacing.md,
-    ...Shadows.sm,
-  },
-  recoveryHeader: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-    alignItems: 'flex-start',
-  },
-  recoveryIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(245, 158, 11, 0.14)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  recoveryTextWrap: {
-    flex: 1,
-    gap: 4,
-  },
-  recoveryTitle: {
-    ...Typography.titleSmall,
-    color: colors.text,
-  },
-  recoveryText: {
-    ...Typography.bodySmall,
-    color: colors.textSecondary,
-    lineHeight: 20,
-  },
-  recoveryActions: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
   },
   batchResultCard: {
     backgroundColor: colors.card,
