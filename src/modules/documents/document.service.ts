@@ -16,6 +16,7 @@ import {
 import {
   optimizeImageForPdf,
   rotateImageRight,
+  type PdfImageQualityPreset,
 } from '../imaging/imaging.service';
 import { extractTextFromDocumentPages } from '../ocr/ocr.service';
 import {
@@ -168,6 +169,32 @@ export type MergeDocumentsResult = {
   mergedPageCount: number;
   sourceDocumentCount: number;
 };
+
+export type DocumentPdfCompressionPreset = PdfImageQualityPreset;
+
+export type DocumentPdfCompressionPresetOption = {
+  key: DocumentPdfCompressionPreset;
+  label: string;
+  description: string;
+};
+
+export const DOCUMENT_PDF_COMPRESSION_PRESETS: DocumentPdfCompressionPresetOption[] = [
+  {
+    key: 'compact',
+    label: 'Kompakt',
+    description: 'Daha küçük dosya',
+  },
+  {
+    key: 'balanced',
+    label: 'Dengeli',
+    description: 'Önerilen kalite',
+  },
+  {
+    key: 'high',
+    label: 'Yüksek',
+    description: 'Daha net çıktı',
+  },
+];
 
 type OverlayContent = {
   assetId?: number;
@@ -1701,7 +1728,10 @@ export async function translateDocumentTextToTurkish(
   };
 }
 
-export async function exportDocumentToPdf(documentId: number) {
+export async function exportDocumentToPdf(
+  documentId: number,
+  compressionPreset: DocumentPdfCompressionPreset = 'balanced',
+) {
   if (!isPositiveInteger(documentId)) {
     throw new Error('Geçersiz belge kimliği.');
   }
@@ -1722,7 +1752,7 @@ export async function exportDocumentToPdf(documentId: number) {
 
   try {
     for (const page of document.pages) {
-      const optimizedUri = await optimizeImageForPdf(page.image_path, 'balanced');
+      const optimizedUri = await optimizeImageForPdf(page.image_path, compressionPreset);
 
       if (optimizedUri !== page.image_path) {
         temporaryPageUris.push(optimizedUri);
@@ -1865,7 +1895,10 @@ export async function exportDocumentToPdf(documentId: number) {
       await removeFileIfExists(previousPdfPath);
     }
 
-    return pdf;
+    return {
+      ...pdf,
+      compressionPreset,
+    };
   } finally {
     await Promise.all(
       collectUniqueFilePaths(temporaryPageUris).map((uri) => removeFileIfExists(uri)),

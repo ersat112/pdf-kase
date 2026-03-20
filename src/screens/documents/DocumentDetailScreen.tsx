@@ -24,6 +24,7 @@ import {
   type MoveDocumentPageDirection,
 } from '../../modules/documents/document-page.service';
 import {
+  DOCUMENT_PDF_COMPRESSION_PRESETS,
   appendScannedPagesToDocument,
   autoCropDocumentPage,
   exportDocumentToExcel,
@@ -35,6 +36,7 @@ import {
   rotateDocumentPageLeft,
   translateDocumentTextToTurkish,
   type DocumentDetail,
+  type DocumentPdfCompressionPreset,
 } from '../../modules/documents/document.service';
 import { launchNativeScanner } from '../../modules/scanner/scanner.service';
 import type { RootStackParamList } from '../../navigation/types';
@@ -234,6 +236,50 @@ function PageActionButton({
   );
 }
 
+function CompressionPresetChip({
+  label,
+  description,
+  selected,
+  onPress,
+  disabled,
+}: {
+  label: string;
+  description: string;
+  selected: boolean;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={({ pressed }) => [
+        styles.presetChip,
+        selected && styles.presetChipSelected,
+        disabled && styles.presetChipDisabled,
+        pressed && !disabled && styles.pressed,
+      ]}
+    >
+      <Text
+        style={[
+          styles.presetChipTitle,
+          selected && styles.presetChipTitleSelected,
+        ]}
+      >
+        {label}
+      </Text>
+      <Text
+        style={[
+          styles.presetChipDescription,
+          selected && styles.presetChipDescriptionSelected,
+        ]}
+      >
+        {description}
+      </Text>
+    </Pressable>
+  );
+}
+
 export function DocumentDetailScreen({ route, navigation }: Props) {
   const { documentId } = route.params;
   const { preloadInterstitial, runAfterTask } = useAdGate();
@@ -249,6 +295,8 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
   const [translatedText, setTranslatedText] = useState<string | null>(null);
   const [translatedAt, setTranslatedAt] = useState<string | null>(null);
   const [translatedSourceLanguage, setTranslatedSourceLanguage] = useState<string | null>(null);
+  const [pdfCompressionPreset, setPdfCompressionPreset] =
+    useState<DocumentPdfCompressionPreset>('balanced');
 
   const mountedRef = useRef(true);
   const busyRef = useRef(false);
@@ -286,6 +334,13 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
   const translatedPreview = useMemo(
     () => buildPreviewText(translatedText),
     [translatedText],
+  );
+
+  const activePdfPreset = useMemo(
+    () =>
+      DOCUMENT_PDF_COMPRESSION_PRESETS.find((item) => item.key === pdfCompressionPreset) ??
+      DOCUMENT_PDF_COMPRESSION_PRESETS[1],
+    [pdfCompressionPreset],
   );
 
   const setBusyState = useCallback((value: boolean, message = DEFAULT_BUSY_MESSAGE) => {
@@ -445,21 +500,32 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
     }
 
     try {
-      setBusyState(true, 'PDF hazırlanıyor...');
+      setBusyState(true, `PDF hazırlanıyor (${activePdfPreset.label})...`);
 
       const result = await runAfterTask(async () => {
-        const exportResult = await exportDocumentToPdf(documentId);
+        const exportResult = await exportDocumentToPdf(documentId, pdfCompressionPreset);
         await loadDocument();
         return exportResult;
       });
 
-      Alert.alert('PDF hazır', result.fileName);
+      Alert.alert('PDF hazır', `${result.fileName}\nPreset: ${activePdfPreset.label}`);
     } catch (actionError) {
       Alert.alert('Hata', getErrorMessage(actionError, 'PDF oluşturulamadı.'));
     } finally {
       resetBusyState();
     }
-  }, [document?.pages.length, documentId, isPro, loadDocument, promptPremiumForSave, resetBusyState, runAfterTask, setBusyState]);
+  }, [
+    activePdfPreset.label,
+    document?.pages.length,
+    documentId,
+    isPro,
+    loadDocument,
+    pdfCompressionPreset,
+    promptPremiumForSave,
+    resetBusyState,
+    runAfterTask,
+    setBusyState,
+  ]);
 
   const handleSharePdf = useCallback(async () => {
     if (!document?.pdf_path) {
@@ -637,7 +703,6 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
   const handleMovePage = useCallback(
     async (
       pageId: number,
-      pageIndex: number,
       direction: MoveDocumentPageDirection,
     ) => {
       if (busyRef.current || !document) {
@@ -681,7 +746,7 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
   );
 
   const handleDeletePage = useCallback(
-    async (pageId: number, pageIndex: number) => {
+    async (pageId: number) => {
       if (busyRef.current || !document) {
         return;
       }
@@ -696,7 +761,7 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
             return Math.max(0, current - 1);
           }
 
-          return current;
+          return Math.min(current, Math.max(0, result.remainingPageCount - 1));
         });
 
         await loadDocument();
@@ -943,17 +1008,17 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
               <View style={styles.pageManagerActions}>
                 <PageActionButton
                   title="↑"
-                  onPress={() => void handleMovePage(page.id, index, 'up')}
+                  onPress={() => void handleMovePage(page.id, 'up')}
                   disabled={busy || index === 0}
                 />
                 <PageActionButton
                   title="↓"
-                  onPress={() => void handleMovePage(page.id, index, 'down')}
+                  onPress={() => void handleMovePage(page.id, 'down')}
                   disabled={busy || index === document.pages.length - 1}
                 />
                 <PageActionButton
                   title="Sil"
-                  onPress={() => void handleDeletePage(page.id, index)}
+                  onPress={() => void handleDeletePage(page.id)}
                   disabled={busy || document.pages.length <= 1}
                   danger
                 />
@@ -989,9 +1054,39 @@ export function DocumentDetailScreen({ route, navigation }: Props) {
       <View style={styles.outputCard}>
         <Text style={styles.outputTitle}>Kaydet / Çıktılar</Text>
 
+        <View style={styles.presetSection}>
+          <View style={styles.presetSectionHeader}>
+            <Text style={styles.presetSectionTitle}>PDF sıkıştırma</Text>
+            <Text style={styles.presetSectionHint}>{activePdfPreset.label}</Text>
+          </View>
+
+          <Text style={styles.presetSectionText}>
+            Kompakt daha küçük dosya üretir. Yüksek preset daha net çıktı verir. Dengeli önerilen varsayılandır.
+          </Text>
+
+          <View style={styles.presetGrid}>
+            {DOCUMENT_PDF_COMPRESSION_PRESETS.map((preset) => (
+              <CompressionPresetChip
+                key={preset.key}
+                label={preset.label}
+                description={preset.description}
+                selected={pdfCompressionPreset === preset.key}
+                onPress={() => setPdfCompressionPreset(preset.key)}
+                disabled={busy}
+              />
+            ))}
+          </View>
+        </View>
+
         <View style={styles.outputActions}>
           <PrimaryButton
-            title={isPro ? (document.pdf_path ? 'PDF güncelle' : 'PDF oluştur') : 'PDF kaydet (Premium)'}
+            title={
+              isPro
+                ? document.pdf_path
+                  ? `PDF güncelle • ${activePdfPreset.label}`
+                  : `PDF oluştur • ${activePdfPreset.label}`
+                : 'PDF kaydet (Premium)'
+            }
             onPress={() => void handleExportPdf()}
             disabled={busy}
           />
@@ -1297,6 +1392,66 @@ const styles = StyleSheet.create({
     ...Typography.titleSmall,
     color: colors.text,
     marginBottom: Spacing.md,
+  },
+  presetSection: {
+    marginBottom: Spacing.md,
+    gap: Spacing.sm,
+  },
+  presetSectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: Spacing.md,
+  },
+  presetSectionTitle: {
+    ...Typography.body,
+    color: colors.text,
+    fontWeight: '800',
+  },
+  presetSectionHint: {
+    ...Typography.bodySmall,
+    color: colors.primary,
+    fontWeight: '800',
+  },
+  presetSectionText: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
+  },
+  presetGrid: {
+    gap: Spacing.sm,
+  },
+  presetChip: {
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    gap: 2,
+  },
+  presetChipSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryMuted,
+  },
+  presetChipDisabled: {
+    opacity: 0.55,
+  },
+  presetChipTitle: {
+    color: colors.text,
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  presetChipTitleSelected: {
+    color: colors.primary,
+  },
+  presetChipDescription: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  presetChipDescriptionSelected: {
+    color: colors.text,
   },
   outputActions: {
     gap: Spacing.sm,
