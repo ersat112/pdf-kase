@@ -13,7 +13,10 @@ import {
 } from 'react-native';
 
 import { Screen } from '../../components/common/Screen';
-import { DocumentPipelineSummaryCard } from '../../components/documents/DocumentPipelineSummaryCard';
+import {
+  DocumentPipelineSummaryCard,
+  type DocumentPipelineSummaryStat,
+} from '../../components/documents/DocumentPipelineSummaryCard';
 import { LocalTrustBadge } from '../../components/trust/LocalTrustBadge';
 import {
   getBillingPlanLabel,
@@ -705,7 +708,7 @@ export function DocumentDetailScreen({
       return null;
     }
 
-    const stats = [
+    const stats: DocumentPipelineSummaryStat[] = [
       {
         label: resolveDocumentStatusLabel(document),
         tone: statusTone,
