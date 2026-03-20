@@ -1,9 +1,13 @@
 // src/modules/documents/document-presentation.ts
+import { Ionicons } from '@expo/vector-icons';
+import type { ComponentProps } from 'react';
+
 export type DocumentSurfaceItem = {
   id: number;
   title?: string | null;
   status?: string | null;
   ocr_status?: string | null;
+  ocr_error?: string | null;
   pageCount?: number | null;
   page_count?: number | null;
   pages?: Array<unknown> | null;
@@ -35,6 +39,35 @@ export type DocumentStatusTone =
   | 'muted'
   | 'danger'
   | 'warning';
+
+export type DocumentPipelineSummaryTone = DocumentStatusTone;
+
+export type DocumentPipelineSummaryIconName = ComponentProps<
+  typeof Ionicons
+>['name'];
+
+export type DocumentPipelineSummaryStat = {
+  label: string;
+  tone?: DocumentPipelineSummaryTone;
+  icon?: DocumentPipelineSummaryIconName;
+};
+
+export type DocumentPipelineSummaryAction = {
+  label: string;
+  onPress: () => void;
+  variant?: 'primary' | 'secondary';
+  disabled?: boolean;
+};
+
+export type DocumentPipelineSummaryModel = {
+  title: string;
+  subtitle: string;
+  message: string;
+  tone?: DocumentPipelineSummaryTone;
+  icon?: DocumentPipelineSummaryIconName;
+  stats?: DocumentPipelineSummaryStat[];
+  actions?: DocumentPipelineSummaryAction[];
+};
 
 export type DocumentHomeOverview<TDocument extends DocumentSurfaceItem> = {
   latestDocument: TDocument | null;
@@ -257,5 +290,286 @@ export function buildDocumentCollectionOverview<TDocument extends DocumentSurfac
     ).length,
     pdfReadyCount: sortedDocuments.filter((item) => Boolean(resolveDocumentPdfPath(item))).length,
     favoriteCount: sortedDocuments.filter((item) => resolveDocumentIsFavorite(item)).length,
+  };
+}
+
+export function buildHomeDocumentPipelineSummary(
+  overview: DocumentHomeOverview<DocumentSurfaceItem>,
+  options: {
+    onOpenDocuments: () => void;
+  },
+): DocumentPipelineSummaryModel {
+  const tone: DocumentPipelineSummaryTone =
+    overview.failedCount > 0
+      ? 'warning'
+      : overview.processingCount > 0
+        ? 'accent'
+        : 'default';
+
+  const message =
+    overview.failedCount > 0
+      ? 'Başarısız OCR kayıtları için belge merkezinden retry akışına geç.'
+      : overview.processingCount > 0
+        ? 'Devam eden OCR işlemleri belge merkezinde canlı durum kartlarıyla görünür.'
+        : 'Belge pipeline temiz durumda. Yeni işleme başlayabilir veya son belgeye dönebilirsin.';
+
+  return {
+    title: 'Belge işlem özeti',
+    subtitle: 'OCR, export ve recovery görünürlüğü tek yerden takip ediliyor.',
+    message,
+    tone,
+    icon: 'pulse-outline',
+    stats: [
+      {
+        label: `${overview.processingCount} işleniyor`,
+        tone: 'accent',
+        icon: 'hourglass-outline',
+      },
+      {
+        label: `${overview.failedCount} hata`,
+        tone: overview.failedCount > 0 ? 'warning' : 'muted',
+        icon: 'alert-circle-outline',
+      },
+      {
+        label: `${overview.pdfReadyCount} PDF hazır`,
+        tone: 'success',
+        icon: 'document-outline',
+      },
+      {
+        label: `${overview.favoriteCount} favori`,
+        tone: 'default',
+        icon: 'star-outline',
+      },
+    ],
+    actions: [
+      {
+        label: 'Belge merkezini aç',
+        onPress: options.onOpenDocuments,
+        variant: 'secondary',
+      },
+    ],
+  };
+}
+
+export function buildDocumentsRecoverySummary(
+  options: {
+    overview: DocumentCollectionOverview<DocumentSurfaceItem>;
+    failedVisibleCount: number;
+    filteredCount: number;
+    busy: boolean;
+    onSelectFailed: () => void;
+    onRetryFailed: () => void;
+  },
+): DocumentPipelineSummaryModel | null {
+  if (options.failedVisibleCount <= 0) {
+    return null;
+  }
+
+  return {
+    title: 'OCR recovery',
+    subtitle: 'Başarısız belge işlemleri bu ekrandan toplu toparlanabilir.',
+    message: `Bu filtrede ${options.failedVisibleCount} belge OCR hatası verdi. İstersen seçim moduna alıp toplu tekrar deneyebilirsin.`,
+    tone: 'warning',
+    icon: 'refresh-outline',
+    stats: [
+      {
+        label: `${options.failedVisibleCount} hata`,
+        tone: 'warning',
+        icon: 'alert-circle-outline',
+      },
+      {
+        label: `${options.overview.processingCount} işleniyor`,
+        tone: options.overview.processingCount > 0 ? 'accent' : 'muted',
+        icon: 'hourglass-outline',
+      },
+      {
+        label: `${options.filteredCount} görünür`,
+        tone: 'default',
+        icon: 'documents-outline',
+      },
+    ],
+    actions: [
+      {
+        label: 'Başarısızları seç',
+        onPress: options.onSelectFailed,
+        variant: 'secondary',
+        disabled: options.busy,
+      },
+      {
+        label: 'Tekrar dene',
+        onPress: options.onRetryFailed,
+        variant: 'primary',
+        disabled: options.busy,
+      },
+    ],
+  };
+}
+
+function buildDocumentDetailPipelineStats(
+  document: DocumentSurfaceItem,
+  pageCount: number,
+): DocumentPipelineSummaryStat[] {
+  const hasPageBasedDocument = pageCount > 0;
+  const documentPdfPath = resolveDocumentPdfPath(document);
+  const documentWordPath = resolveDocumentWordPath(document);
+
+  return [
+    {
+      label: resolveDocumentStatusLabel(document),
+      tone: resolveDocumentStatusTone(document),
+      icon: 'pulse-outline',
+    },
+    {
+      label: hasPageBasedDocument ? `${pageCount} sayfa` : 'Sayfa tabanlı değil',
+      tone: hasPageBasedDocument ? 'default' : 'muted',
+      icon: 'layers-outline',
+    },
+    {
+      label: documentPdfPath ? 'PDF hazır' : 'PDF yok',
+      tone: documentPdfPath ? 'success' : 'muted',
+      icon: 'document-outline',
+    },
+    {
+      label: documentWordPath ? 'Word hazır' : 'Word yok',
+      tone: documentWordPath ? 'accent' : 'muted',
+      icon: 'document-text-outline',
+    },
+  ];
+}
+
+export function buildDocumentDetailPipelineSummary(
+  options: {
+    document: DocumentSurfaceItem | null;
+    pageCount: number;
+    actionDisabled: boolean;
+    onOpenDocuments: () => void;
+    onOpenEditor: () => void;
+    onRunOcr: () => void;
+  },
+): DocumentPipelineSummaryModel | null {
+  const { document } = options;
+
+  if (!document) {
+    return null;
+  }
+
+  const hasPageBasedDocument = options.pageCount > 0;
+  const documentPdfPath = resolveDocumentPdfPath(document);
+  const documentWordPath = resolveDocumentWordPath(document);
+  const statusTone = resolveDocumentStatusTone(document);
+  const stats = buildDocumentDetailPipelineStats(document, options.pageCount);
+
+  if (!hasPageBasedDocument) {
+    return {
+      title: 'İçe aktarılan PDF',
+      subtitle: 'Bu kayıt sayfa tabanlı belge akışına henüz girmiyor.',
+      message:
+        'OCR, editör ve yeniden export v1 akışı için sayfa tabanlı belge gerekiyor.',
+      tone: 'muted',
+      icon: 'information-circle-outline',
+      stats,
+      actions: [
+        {
+          label: 'Belgelerim',
+          onPress: options.onOpenDocuments,
+          variant: 'secondary',
+          disabled: options.actionDisabled,
+        },
+      ],
+    };
+  }
+
+  if (document.ocr_status === 'failed') {
+    return {
+      title: 'OCR recovery gerekli',
+      subtitle: 'Belge iş akışı hata verdi, aynı kayıttan tekrar deneyebilirsin.',
+      message:
+        document.ocr_error?.trim() ||
+        'OCR işlemi tamamlanamadı. Düzenleme sonrası yeniden deneyebilirsin.',
+      tone: 'warning',
+      icon: 'refresh-outline',
+      stats,
+      actions: [
+        {
+          label: 'Editörde aç',
+          onPress: options.onOpenEditor,
+          variant: 'secondary',
+          disabled: options.actionDisabled,
+        },
+        {
+          label: 'OCR tekrar dene',
+          onPress: options.onRunOcr,
+          variant: 'primary',
+          disabled: options.actionDisabled,
+        },
+      ],
+    };
+  }
+
+  if (document.ocr_status === 'processing') {
+    return {
+      title: 'Belge işleniyor',
+      subtitle: 'OCR pipeline çalışıyor.',
+      message:
+        'İşlem tamamlandığında OCR metni ve export yüzeyleri bu ekranda güncellenecek.',
+      tone: 'accent',
+      icon: 'hourglass-outline',
+      stats,
+      actions: [],
+    };
+  }
+
+  if (
+    documentPdfPath ||
+    documentWordPath ||
+    document.ocr_status === 'ready' ||
+    document.status === 'ready'
+  ) {
+    return {
+      title: 'Belge hazır',
+      subtitle: 'Düzenleme, OCR, çeviri ve export yüzeyleri aktif.',
+      message: documentPdfPath
+        ? 'PDF çıktısı hazır. Gerekirse yeniden üretip Word / Excel veya paylaşma akışına devam edebilirsin.'
+        : document.ocr_status === 'ready'
+          ? 'OCR metni hazır. Çeviri veya export adımına geçebilirsin.'
+          : 'Belge düzenleme ve export için hazır durumda.',
+      tone: documentPdfPath ? 'success' : statusTone,
+      icon: documentPdfPath
+        ? 'checkmark-circle-outline'
+        : 'sparkles-outline',
+      stats,
+      actions: [
+        {
+          label: 'Editörde aç',
+          onPress: options.onOpenEditor,
+          variant: 'secondary',
+          disabled: options.actionDisabled,
+        },
+      ],
+    };
+  }
+
+  return {
+    title: 'Belge taslak durumda',
+    subtitle: 'Akış henüz tamamlanmadı.',
+    message:
+      'Editörde açabilir, OCR başlatabilir ve ardından export akışına geçebilirsin.',
+    tone: 'default',
+    icon: 'document-text-outline',
+    stats,
+    actions: [
+      {
+        label: 'Editörde aç',
+        onPress: options.onOpenEditor,
+        variant: 'secondary',
+        disabled: options.actionDisabled,
+      },
+      {
+        label: 'OCR çıkar',
+        onPress: options.onRunOcr,
+        variant: 'primary',
+        disabled: options.actionDisabled,
+      },
+    ],
   };
 }
