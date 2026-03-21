@@ -35,8 +35,10 @@ import {
   addStampOverlay,
   deleteOverlay,
   getOverlayAssetId,
+  getOverlaySignatureColor,
   getPageOverlays,
   updateOverlayTransform,
+  updateSignatureOverlayStyle,
   type DocumentOverlay,
 } from '../../modules/overlays/overlay.service';
 import { removeFilesIfExist } from '../../modules/storage/file.service';
@@ -129,6 +131,16 @@ const OVERLAY_MIN_HEIGHT = 0.04;
 const OVERLAY_MAX_HEIGHT = 0.7;
 const OVERLAY_SNAP_THRESHOLD = 0.025;
 const DEFAULT_SIGNATURE_COLOR = '#111111';
+const SIGNATURE_OVERLAY_COLORS = [
+  '#111111',
+  '#374151',
+  '#2563EB',
+  '#0F766E',
+  '#7C3AED',
+  '#D97706',
+  '#DC2626',
+  '#15803D',
+] as const;
 
 function ToolbarButton({
   title,
@@ -164,6 +176,33 @@ function ToolbarButton({
       >
         {title}
       </Text>
+    </Pressable>
+  );
+}
+
+function ColorSwatchButton({
+  color,
+  selected,
+  onPress,
+  disabled,
+}: {
+  color: string;
+  selected: boolean;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Pressable
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.colorSwatchButton,
+        selected && styles.colorSwatchButtonSelected,
+        disabled && styles.toolbarButtonDisabled,
+        pressed && !disabled && styles.pressed,
+      ]}
+    >
+      <View style={[styles.colorSwatchInner, { backgroundColor: color }]} />
     </Pressable>
   );
 }
@@ -403,6 +442,9 @@ export function PdfEditorScreen({ route, navigation }: Props) {
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [selectedOverlayId, setSelectedOverlayId] = useState<number | null>(null);
   const [stampSizePreset, setStampSizePreset] = useState<StampSizePreset>('medium');
+  const [signaturePlacementColor, setSignaturePlacementColor] = useState(
+    DEFAULT_SIGNATURE_COLOR,
+  );
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [previewSize, setPreviewSize] = useState<Size>({ width: 0, height: 0 });
@@ -437,6 +479,14 @@ export function PdfEditorScreen({ route, navigation }: Props) {
     () => overlays.find((overlay) => overlay.id === selectedOverlayId) ?? null,
     [overlays, selectedOverlayId],
   );
+
+  const selectedOverlaySignatureColor = useMemo(() => {
+    if (!selectedOverlay || selectedOverlay.type !== 'signature') {
+      return DEFAULT_SIGNATURE_COLOR;
+    }
+
+    return normalizeHexColor(getOverlaySignatureColor(selectedOverlay));
+  }, [selectedOverlay]);
 
   const selectedOverlayAsset = useMemo(() => {
     if (!selectedOverlay) {
@@ -548,6 +598,19 @@ export function PdfEditorScreen({ route, navigation }: Props) {
       };
     }, [documentId]),
   );
+
+  useEffect(() => {
+    if (selectedOverlay?.type === 'signature') {
+      setSignaturePlacementColor(selectedOverlaySignatureColor);
+      return;
+    }
+
+    if (activeLibraryType !== 'signature') {
+      return;
+    }
+
+    setSignaturePlacementColor((current) => normalizeHexColor(current));
+  }, [activeLibraryType, selectedOverlay?.id, selectedOverlay?.type, selectedOverlaySignatureColor]);
 
   useEffect(() => {
     const nextAssets = activeLibraryType === 'stamp' ? stampAssets : signatureAssets;
@@ -779,7 +842,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
           const strokeColor =
             typeof metadata.strokeColor === 'string'
               ? normalizeHexColor(metadata.strokeColor)
-              : DEFAULT_SIGNATURE_COLOR;
+              : signaturePlacementColor;
 
           await addSignatureAssetOverlay({
             documentId,
@@ -832,6 +895,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
       resolvedPlacementSize.height,
       resolvedPlacementSize.width,
       selectedAsset,
+      signaturePlacementColor,
     ],
   );
 
@@ -1140,6 +1204,34 @@ export function PdfEditorScreen({ route, navigation }: Props) {
     [reloadCurrentPageOverlays, selectedOverlay],
   );
 
+  const updateSelectedSignatureColorValue = useCallback(
+    async (nextColor: string) => {
+      const normalizedColor = normalizeHexColor(nextColor);
+
+      if (selectedOverlay?.type === 'signature') {
+        try {
+          setBusy(true);
+          await updateSignatureOverlayStyle({
+            overlayId: selectedOverlay.id,
+            strokeColor: normalizedColor,
+            opacity: selectedOverlay.opacity,
+          });
+          await reloadCurrentPageOverlays();
+          setSignaturePlacementColor(normalizedColor);
+        } catch (error) {
+          Alert.alert('Hata', getErrorMessage(error, 'İmza rengi güncellenemedi.'));
+        } finally {
+          setBusy(false);
+        }
+
+        return;
+      }
+
+      setSignaturePlacementColor(normalizedColor);
+    },
+    [reloadCurrentPageOverlays, selectedOverlay],
+  );
+
   const overlayPreviewItems = useMemo<OverlayPreviewItem[]>(() => {
     return overlays
       .map((overlay) => {
@@ -1323,6 +1415,35 @@ export function PdfEditorScreen({ route, navigation }: Props) {
         </Text>
       </View>
 
+      {activeLibraryType === 'signature' || selectedOverlay?.type === 'signature' ? (
+        <View style={styles.sizeCard}>
+          <Text style={styles.sizeCardTitle}>İmza rengi</Text>
+          <Text style={styles.sizeHint}>
+            {selectedOverlay?.type === 'signature'
+              ? 'Seçili imzanın rengini değiştir. Bu değişiklik PDF çıktısına da yazılır.'
+              : 'Sayfaya yerleştirilecek yeni imzanın rengini seç.'}
+          </Text>
+
+          <View style={styles.colorPaletteRow}>
+            {SIGNATURE_OVERLAY_COLORS.map((color) => (
+              <ColorSwatchButton
+                key={color}
+                color={color}
+                selected={
+                  (selectedOverlay?.type === 'signature'
+                    ? selectedOverlaySignatureColor
+                    : signaturePlacementColor) === color
+                }
+                onPress={() => {
+                  void updateSelectedSignatureColorValue(color);
+                }}
+                disabled={busy}
+              />
+            ))}
+          </View>
+        </View>
+      ) : null}
+
       <View style={styles.sizeCard}>
         <Text style={styles.sizeCardTitle}>Yeni öğe boyutu</Text>
 
@@ -1501,7 +1622,12 @@ export function PdfEditorScreen({ route, navigation }: Props) {
               <Image
                 source={{ uri: getPreferredAssetPreviewUri(item.asset) }}
                 resizeMode="contain"
-                style={styles.overlayImage}
+                style={[
+                  styles.overlayImage,
+                  item.kind === 'signature'
+                    ? { tintColor: normalizeHexColor(getOverlaySignatureColor(item.overlay)) }
+                    : null,
+                ]}
               />
 
               {item.isSelected ? (
@@ -1641,6 +1767,12 @@ export function PdfEditorScreen({ route, navigation }: Props) {
                   <Text style={styles.overlayRowHint}>
                     {formatOverlaySize(overlay)} • {formatOverlayOpacity(overlay.opacity)}
                   </Text>
+
+                  {isSignature ? (
+                    <Text style={styles.overlayRowHint}>
+                      Renk: {normalizeHexColor(getOverlaySignatureColor(overlay))}
+                    </Text>
+                  ) : null}
                 </View>
 
                 <ToolbarButton
@@ -1744,6 +1876,26 @@ const styles = StyleSheet.create({
   },
   toolbarButtonTextDanger: {
     color: '#FCA5A5',
+  },
+  colorPaletteRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  colorSwatchButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  colorSwatchButtonSelected: {
+    borderColor: colors.primary,
+    borderWidth: 2,
+    transform: [{ scale: 1.04 }],
   },
   sizeCard: {
     backgroundColor: colors.card,
