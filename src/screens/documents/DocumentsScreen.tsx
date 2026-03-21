@@ -5,7 +5,6 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Image,
   Pressable,
   StyleSheet,
   Text,
@@ -14,7 +13,16 @@ import {
 } from 'react-native';
 
 import { Screen } from '../../components/common/Screen';
+import {
+  DocumentChipRow,
+  type DocumentChipItem,
+} from '../../components/documents/DocumentChipRow';
+import { DocumentLibraryCard } from '../../components/documents/DocumentLibraryCard';
 import { DocumentPipelineSummaryCard } from '../../components/documents/DocumentPipelineSummaryCard';
+import {
+  DocumentsOverviewStrip,
+  type DocumentsOverviewItem,
+} from '../../components/documents/DocumentsOverviewStrip';
 import { LocalTrustBadge } from '../../components/trust/LocalTrustBadge';
 import {
   getPremiumGateMessage,
@@ -29,7 +37,6 @@ import {
   resolveDocumentPageCount,
   resolveDocumentPdfPath,
   resolveDocumentStatusLabel,
-  resolveDocumentStatusTone,
   resolveDocumentTitle,
 } from '../../modules/documents/document-presentation';
 import {
@@ -50,6 +57,7 @@ import {
   setDocumentsFavorite,
   type DocumentSummary,
 } from '../../modules/documents/document.service';
+import type { RootNavigationProp } from '../../navigation/types';
 import { useBillingStore } from '../../store/useBillingStore';
 import {
   Radius,
@@ -155,89 +163,6 @@ function formatBatchSummaryText(result: BatchResult) {
   return lines.join('\n');
 }
 
-function FilterChip({
-  label,
-  selected,
-  onPress,
-}: {
-  label: string;
-  selected: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.filterChip,
-        selected && styles.filterChipSelected,
-        pressed && styles.pressed,
-      ]}
-    >
-      <Text
-        style={[
-          styles.filterChipText,
-          selected && styles.filterChipTextSelected,
-        ]}
-      >
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
-function TaxonomyChip({
-  label,
-  selected,
-  onPress,
-}: {
-  label: string;
-  selected: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.taxonomyChip,
-        selected && styles.taxonomyChipSelected,
-        pressed && styles.pressed,
-      ]}
-    >
-      <Text
-        style={[
-          styles.taxonomyChipText,
-          selected && styles.taxonomyChipTextSelected,
-        ]}
-      >
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
-function StatCard({
-  label,
-  value,
-  icon,
-}: {
-  label: string;
-  value: string | number;
-  icon: React.ComponentProps<typeof Ionicons>['name'];
-}) {
-  return (
-    <View style={styles.statCard}>
-      <View style={styles.statIconWrap}>
-        <Ionicons name={icon} size={18} color={colors.primary} />
-      </View>
-
-      <View style={styles.statTextWrap}>
-        <Text style={styles.statValue}>{value}</Text>
-        <Text style={styles.statLabel}>{label}</Text>
-      </View>
-    </View>
-  );
-}
-
 function EmptyState({
   onCreate,
   onImport,
@@ -286,223 +211,8 @@ function EmptyState({
   );
 }
 
-function StatusBadge({ item }: { item: DocumentSummary }) {
-  const tone = resolveDocumentStatusTone(item);
-
-  return (
-    <View
-      style={[
-        styles.statusBadge,
-        tone === 'success' && styles.statusBadgeSuccess,
-        tone === 'accent' && styles.statusBadgeAccent,
-        tone === 'muted' && styles.statusBadgeMuted,
-        tone === 'danger' && styles.statusBadgeDanger,
-      ]}
-    >
-      <Text
-        style={[
-          styles.statusBadgeText,
-          tone === 'success' && styles.statusBadgeTextSuccess,
-          tone === 'accent' && styles.statusBadgeTextAccent,
-          tone === 'muted' && styles.statusBadgeTextMuted,
-          tone === 'danger' && styles.statusBadgeTextDanger,
-        ]}
-      >
-        {resolveDocumentStatusLabel(item)}
-      </Text>
-    </View>
-  );
-}
-
-function DocumentCard({
-  item,
-  selectionMode,
-  selected,
-  renameOpen,
-  renameValue,
-  onChangeRenameValue,
-  onSubmitRename,
-  onCancelRename,
-  onOpen,
-  onLongPress,
-  onToggleFavorite,
-}: {
-  item: DocumentSummary;
-  selectionMode: boolean;
-  selected: boolean;
-  renameOpen: boolean;
-  renameValue: string;
-  onChangeRenameValue: (value: string) => void;
-  onSubmitRename: () => void;
-  onCancelRename: () => void;
-  onOpen: () => void;
-  onLongPress: () => void;
-  onToggleFavorite: () => void;
-}) {
-  const favorite = resolveDocumentIsFavorite(item);
-  const title = resolveDocumentTitle(item);
-  const pageCount = resolveDocumentPageCount(item);
-
-  return (
-    <View style={styles.card}>
-      <Pressable
-        onPress={onOpen}
-        onLongPress={onLongPress}
-        delayLongPress={220}
-        style={({ pressed }) => [
-          styles.cardMainPressable,
-          pressed && styles.pressed,
-        ]}
-      >
-        <View style={styles.thumbnailFrame}>
-          {item.thumbnail_path ? (
-            <Image source={{ uri: item.thumbnail_path }} style={styles.thumbnail} />
-          ) : (
-            <View style={styles.thumbnailPlaceholder}>
-              <Ionicons
-                name="document-text-outline"
-                size={22}
-                color={colors.textTertiary}
-              />
-              <Text style={styles.thumbnailPlaceholderText}>Önizleme yok</Text>
-            </View>
-          )}
-
-          {selected ? (
-            <View style={styles.selectionBadge}>
-              <Ionicons name="checkmark-circle" size={18} color={colors.primary} />
-            </View>
-          ) : null}
-        </View>
-
-        <View style={styles.cardContent}>
-          <View style={styles.cardTopRow}>
-            <View style={styles.cardTitleWrap}>
-              <Text numberOfLines={2} style={styles.cardTitle}>
-                {title}
-              </Text>
-
-              <View style={styles.cardMetaRow}>
-                <Text style={styles.cardMeta}>Sayfa: {pageCount}</Text>
-                <Text style={styles.cardMetaDot}>•</Text>
-                <Text style={styles.cardMeta}>{formatDate(item.updated_at)}</Text>
-              </View>
-            </View>
-
-            <Ionicons
-              name={selectionMode ? 'checkmark-done-outline' : 'chevron-forward'}
-              size={20}
-              color={selected ? colors.primary : colors.textTertiary}
-            />
-          </View>
-
-          <View style={styles.cardBottomRow}>
-            <StatusBadge item={item} />
-
-            {favorite ? (
-              <View style={styles.favoriteMiniBadge}>
-                <Ionicons name="star" size={12} color={colors.primary} />
-                <Text style={styles.favoriteMiniBadgeText}>Favori</Text>
-              </View>
-            ) : null}
-
-            <View style={styles.inlineMiniBadge}>
-              <Text style={styles.inlineMiniBadgeText}>LOCAL</Text>
-            </View>
-
-            {item.collection_name ? (
-              <View style={styles.inlineMiniBadge}>
-                <Text style={styles.inlineMiniBadgeText}>
-                  {item.collection_name}
-                </Text>
-              </View>
-            ) : null}
-
-            {item.tag_names.slice(0, 2).map((tag) => (
-              <View key={tag} style={styles.inlineMiniBadge}>
-                <Text style={styles.inlineMiniBadgeText}>#{tag}</Text>
-              </View>
-            ))}
-
-            {item.word_path ? (
-              <View style={styles.inlineMiniBadge}>
-                <Text style={styles.inlineMiniBadgeText}>WORD</Text>
-              </View>
-            ) : null}
-
-            {item.pdf_path ? (
-              <View style={styles.inlineMiniBadge}>
-                <Text style={styles.inlineMiniBadgeText}>PDF</Text>
-              </View>
-            ) : null}
-          </View>
-        </View>
-      </Pressable>
-
-      {!selectionMode ? (
-        <View style={styles.cardActionRow}>
-          <Pressable
-            onPress={onToggleFavorite}
-            style={({ pressed }) => [
-              styles.inlineActionButton,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Ionicons
-              name={favorite ? 'star' : 'star-outline'}
-              size={16}
-              color={favorite ? colors.primary : colors.textSecondary}
-            />
-            <Text style={styles.inlineActionButtonText}>
-              {favorite ? 'Favoriden çıkar' : 'Favori yap'}
-            </Text>
-          </Pressable>
-        </View>
-      ) : null}
-
-      {renameOpen ? (
-        <View style={styles.renameCard}>
-          <Text style={styles.renameTitle}>Belge adını düzenle</Text>
-
-          <TextInput
-            value={renameValue}
-            onChangeText={onChangeRenameValue}
-            placeholder="Belge adı"
-            placeholderTextColor={colors.textTertiary}
-            style={styles.renameInput}
-            autoFocus
-            maxLength={120}
-          />
-
-          <View style={styles.renameActions}>
-            <Pressable
-              onPress={onCancelRename}
-              style={({ pressed }) => [
-                styles.renameSecondaryButton,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text style={styles.renameSecondaryButtonText}>Vazgeç</Text>
-            </Pressable>
-
-            <Pressable
-              onPress={onSubmitRename}
-              style={({ pressed }) => [
-                styles.renamePrimaryButton,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text style={styles.renamePrimaryButtonText}>Kaydet</Text>
-            </Pressable>
-          </View>
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
 export function DocumentsScreen() {
-  const navigation = useNavigation<any>();
+  const navigation = useNavigation<RootNavigationProp<'Documents'>>();
 
   const billingHydrated = useBillingStore((state) => state.hydrated);
   const isPro = useBillingStore((state) => state.isPro);
@@ -683,7 +393,6 @@ export function DocumentsScreen() {
         resolveDocumentActionState(item) === 'failed',
     );
   }, [filteredDocuments]);
-
 
   const singleSelectedDocument =
     selectedDocuments.length === 1 ? selectedDocuments[0] : null;
@@ -1288,6 +997,146 @@ export function DocumentsScreen() {
       ? 'Toplu PDF'
       : 'Toplu PDF (Premium)';
 
+  const overviewItems = useMemo<DocumentsOverviewItem[]>(
+    () => [
+      {
+        key: 'total',
+        title: 'Toplam belge',
+        subtitle: 'Kütüphanedeki tüm kayıtlar',
+        value: overview.totalCount,
+        icon: 'folder-open-outline',
+        tone: 'accent',
+      },
+      {
+        key: 'pages',
+        title: 'Toplam sayfa',
+        subtitle: 'Sayfa tabanlı belge yüzeyi',
+        value: overview.totalPages,
+        icon: 'layers-outline',
+      },
+      {
+        key: 'pdf',
+        title: 'PDF hazır',
+        subtitle: 'Sonuçlandırılmış kayıtlar',
+        value: overview.pdfReadyCount || overview.readyCount,
+        icon: 'document-outline',
+        tone: 'success',
+      },
+      {
+        key: 'processing',
+        title: 'İşleniyor',
+        subtitle: 'OCR pipeline aktif kayıtlar',
+        value: overview.processingCount,
+        icon: 'hourglass-outline',
+        tone: overview.processingCount > 0 ? 'warning' : 'default',
+      },
+      {
+        key: 'failed',
+        title: 'OCR hata',
+        subtitle: 'Recovery bekleyen kayıtlar',
+        value: overview.failedCount,
+        icon: 'alert-circle-outline',
+        tone: overview.failedCount > 0 ? 'warning' : 'default',
+      },
+      {
+        key: 'favorite',
+        title: 'Favori',
+        subtitle: 'Hızlı dönüş için işaretlenenler',
+        value: overview.favoriteCount,
+        icon: 'star-outline',
+      },
+    ],
+    [overview.favoriteCount, overview.failedCount, overview.pdfReadyCount, overview.processingCount, overview.readyCount, overview.totalCount, overview.totalPages],
+  );
+
+  const filterItems = useMemo<DocumentChipItem[]>(
+    () => [
+      { key: 'all', label: 'Tümü', selected: filter === 'all', onPress: () => setFilter('all') },
+      { key: 'draft', label: 'Taslak', selected: filter === 'draft', onPress: () => setFilter('draft') },
+      { key: 'ready', label: 'Hazır', selected: filter === 'ready', onPress: () => setFilter('ready') },
+      { key: 'ocr', label: 'OCR', selected: filter === 'ocr', onPress: () => setFilter('ocr') },
+      { key: 'processing', label: 'İşleniyor', selected: filter === 'processing', onPress: () => setFilter('processing') },
+      { key: 'failed', label: 'Hata', selected: filter === 'failed', onPress: () => setFilter('failed') },
+      { key: 'pdf', label: 'PDF', selected: filter === 'pdf', onPress: () => setFilter('pdf') },
+      { key: 'favorite', label: 'Favori', selected: filter === 'favorite', onPress: () => setFilter('favorite') },
+    ],
+    [filter],
+  );
+
+  const collectionItems = useMemo<DocumentChipItem[]>(
+    () => [
+      {
+        key: 'all',
+        label: 'Tümü',
+        selected: selectedCollectionName === null,
+        onPress: () => setSelectedCollectionName(null),
+      },
+      ...collections.map((item) => ({
+        key: `collection-${item.id}`,
+        label: item.name,
+        selected: selectedCollectionName === item.name,
+        onPress: () =>
+          setSelectedCollectionName((current) =>
+            current === item.name ? null : item.name,
+          ),
+      })),
+    ],
+    [collections, selectedCollectionName],
+  );
+
+  const tagItems = useMemo<DocumentChipItem[]>(
+    () => [
+      {
+        key: 'all',
+        label: 'Tümü',
+        selected: selectedTagName === null,
+        onPress: () => setSelectedTagName(null),
+      },
+      ...tags.slice(0, 10).map((item) => ({
+        key: `tag-${item.id}`,
+        label: `#${item.name}`,
+        selected: selectedTagName === item.name,
+        onPress: () =>
+          setSelectedTagName((current) =>
+            current === item.name ? null : item.name,
+          ),
+      })),
+    ],
+    [selectedTagName, tags],
+  );
+
+  const selectableCollectionItems = useMemo<DocumentChipItem[]>(
+    () => [
+      ...collections.map((item) => ({
+        key: `assign-collection-${item.id}`,
+        label: item.name,
+        onPress: () => {
+          void handleAssignCollection(item.name);
+        },
+      })),
+      {
+        key: 'assign-collection-clear',
+        label: 'Klasörü temizle',
+        onPress: () => {
+          void handleAssignCollection(null);
+        },
+      },
+    ],
+    [collections, handleAssignCollection],
+  );
+
+  const selectableTagItems = useMemo<DocumentChipItem[]>(
+    () =>
+      tags.slice(0, 10).map((item) => ({
+        key: `assign-tag-${item.id}`,
+        label: `#${item.name}`,
+        onPress: () => {
+          void handleAddTag(item.name);
+        },
+      })),
+    [handleAddTag, tags],
+  );
+
   return (
     <Screen
       title="Dosyalar"
@@ -1296,7 +1145,8 @@ export function DocumentsScreen() {
       <View style={styles.heroCard}>
         <View style={styles.heroTopRow}>
           <View style={styles.heroTextWrap}>
-            <Text style={styles.heroTitle}>Belge merkezi</Text>
+            <Text style={styles.heroEyebrow}>Belge merkezi</Text>
+            <Text style={styles.heroTitle}>Kütüphanen hazır</Text>
             <Text style={styles.heroText}>
               Tüm taramalar, taslaklar, OCR hazır kayıtlar ve PDF çıktıları tek yerde.
             </Text>
@@ -1314,7 +1164,14 @@ export function DocumentsScreen() {
           </Pressable>
         </View>
 
-        <LocalTrustBadge />
+        <View style={styles.heroInfoRow}>
+          <LocalTrustBadge compact />
+          <View style={styles.heroMiniPill}>
+            <Text style={styles.heroMiniPillText}>
+              {loading ? 'Yükleniyor' : `${filteredDocuments.length} görünür kayıt`}
+            </Text>
+          </View>
+        </View>
 
         <View style={styles.searchWrap}>
           <Ionicons
@@ -1330,110 +1187,28 @@ export function DocumentsScreen() {
             style={styles.searchInput}
           />
         </View>
+      </View>
 
-        <View style={styles.filterRow}>
-          <FilterChip
-            label="Tümü"
-            selected={filter === 'all'}
-            onPress={() => setFilter('all')}
-          />
-          <FilterChip
-            label="Taslak"
-            selected={filter === 'draft'}
-            onPress={() => setFilter('draft')}
-          />
-          <FilterChip
-            label="Hazır"
-            selected={filter === 'ready'}
-            onPress={() => setFilter('ready')}
-          />
-          <FilterChip
-            label="OCR"
-            selected={filter === 'ocr'}
-            onPress={() => setFilter('ocr')}
-          />
-          <FilterChip
-            label="İşleniyor"
-            selected={filter === 'processing'}
-            onPress={() => setFilter('processing')}
-          />
-          <FilterChip
-            label="Hata"
-            selected={filter === 'failed'}
-            onPress={() => setFilter('failed')}
-          />
-          <FilterChip
-            label="PDF"
-            selected={filter === 'pdf'}
-            onPress={() => setFilter('pdf')}
-          />
-          <FilterChip
-            label="Favori"
-            selected={filter === 'favorite'}
-            onPress={() => setFilter('favorite')}
-          />
+      <DocumentsOverviewStrip items={overviewItems} />
+
+      <View style={styles.filterSection}>
+        <Text style={styles.filterSectionTitle}>Durum filtreleri</Text>
+        <DocumentChipRow items={filterItems} />
+      </View>
+
+      {collections.length > 0 ? (
+        <View style={styles.filterSection}>
+          <Text style={styles.filterSectionTitle}>Klasör filtresi</Text>
+          <DocumentChipRow items={collectionItems} />
         </View>
+      ) : null}
 
-        {collections.length > 0 ? (
-          <View style={styles.taxonomySection}>
-            <Text style={styles.taxonomyLabel}>Klasör filtresi</Text>
-            <View style={styles.taxonomyRow}>
-              <TaxonomyChip
-                label="Tümü"
-                selected={selectedCollectionName === null}
-                onPress={() => setSelectedCollectionName(null)}
-              />
-              {collections.map((item) => (
-                <TaxonomyChip
-                  key={item.id}
-                  label={item.name}
-                  selected={selectedCollectionName === item.name}
-                  onPress={() =>
-                    setSelectedCollectionName((current) =>
-                      current === item.name ? null : item.name,
-                    )
-                  }
-                />
-              ))}
-            </View>
-          </View>
-        ) : null}
-
-        {tags.length > 0 ? (
-          <View style={styles.taxonomySection}>
-            <Text style={styles.taxonomyLabel}>Etiket filtresi</Text>
-            <View style={styles.taxonomyRow}>
-              <TaxonomyChip
-                label="Tümü"
-                selected={selectedTagName === null}
-                onPress={() => setSelectedTagName(null)}
-              />
-              {tags.slice(0, 10).map((item) => (
-                <TaxonomyChip
-                  key={item.id}
-                  label={`#${item.name}`}
-                  selected={selectedTagName === item.name}
-                  onPress={() =>
-                    setSelectedTagName((current) =>
-                      current === item.name ? null : item.name,
-                    )
-                  }
-                />
-              ))}
-            </View>
-          </View>
-        ) : null}
-      </View>
-
-      <View style={styles.statsGrid}>
-        <StatCard label="Toplam belge" value={overview.totalCount} icon="folder-open-outline" />
-        <StatCard label="Toplam sayfa" value={overview.totalPages} icon="layers-outline" />
-        <StatCard label="Taslak" value={overview.draftCount} icon="create-outline" />
-        <StatCard label="PDF hazır" value={overview.pdfReadyCount || overview.readyCount} icon="document-outline" />
-        <StatCard label="İşleniyor" value={overview.processingCount} icon="hourglass-outline" />
-        <StatCard label="OCR hata" value={overview.failedCount} icon="alert-circle-outline" />
-        <StatCard label="Favori" value={overview.favoriteCount} icon="star-outline" />
-      </View>
+      {tags.length > 0 ? (
+        <View style={styles.filterSection}>
+          <Text style={styles.filterSectionTitle}>Etiket filtresi</Text>
+          <DocumentChipRow items={tagItems} />
+        </View>
+      ) : null}
 
       {!selectionMode && recoverySummary ? (
         <DocumentPipelineSummaryCard {...recoverySummary} />
@@ -1453,7 +1228,11 @@ export function DocumentsScreen() {
               onPress={() => setBatchResult(null)}
               style={({ pressed }) => [pressed && styles.pressed]}
             >
-              <Ionicons name="close-outline" size={20} color={colors.textTertiary} />
+              <Ionicons
+                name="close-outline"
+                size={20}
+                color={colors.textTertiary}
+              />
             </Pressable>
           </View>
 
@@ -1649,21 +1428,7 @@ export function DocumentsScreen() {
               </Pressable>
             </View>
 
-            <View style={styles.taxonomyRow}>
-              {collections.map((item) => (
-                <TaxonomyChip
-                  key={item.id}
-                  label={item.name}
-                  selected={false}
-                  onPress={() => void handleAssignCollection(item.name)}
-                />
-              ))}
-              <TaxonomyChip
-                label="Klasörü temizle"
-                selected={false}
-                onPress={() => void handleAssignCollection(null)}
-              />
-            </View>
+            <DocumentChipRow items={selectableCollectionItems} />
           </View>
 
           <View style={styles.taxonomyManagerCard}>
@@ -1692,16 +1457,7 @@ export function DocumentsScreen() {
               </Pressable>
             </View>
 
-            <View style={styles.taxonomyRow}>
-              {tags.slice(0, 10).map((item) => (
-                <TaxonomyChip
-                  key={item.id}
-                  label={`#${item.name}`}
-                  selected={false}
-                  onPress={() => void handleAddTag(item.name)}
-                />
-              ))}
-            </View>
+            <DocumentChipRow items={selectableTagItems} />
           </View>
         </View>
       ) : null}
@@ -1735,13 +1491,14 @@ export function DocumentsScreen() {
       ) : (
         <View style={styles.list}>
           {filteredDocuments.map((item) => (
-            <DocumentCard
+            <DocumentLibraryCard
               key={item.id}
               item={item}
               selectionMode={selectionMode}
               selected={selectedIds.includes(item.id)}
               renameOpen={renameTargetId === item.id}
               renameValue={renameTargetId === item.id ? renameValue : ''}
+              updatedAtLabel={formatDate(item.updated_at)}
               onChangeRenameValue={setRenameValue}
               onSubmitRename={() => void handleSubmitRename()}
               onCancelRename={handleCancelRename}
@@ -1777,6 +1534,12 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 6,
   },
+  heroEyebrow: {
+    ...Typography.caption,
+    color: colors.primary,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
   heroTitle: {
     ...Typography.titleLarge,
     color: colors.text,
@@ -1801,6 +1564,27 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 14,
   },
+  heroInfoRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  heroMiniPill: {
+    minHeight: 30,
+    borderRadius: Radius.full,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+  },
+  heroMiniPillText: {
+    ...Typography.caption,
+    color: colors.textSecondary,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
   searchWrap: {
     minHeight: 48,
     backgroundColor: colors.surfaceElevated,
@@ -1818,103 +1602,13 @@ const styles = StyleSheet.create({
     color: colors.text,
     ...Typography.body,
   },
-  filterRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+  filterSection: {
     gap: Spacing.sm,
   },
-  filterChip: {
-    minHeight: 34,
-    paddingHorizontal: Spacing.md,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceElevated,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  filterChipSelected: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  filterChipText: {
-    ...Typography.bodySmall,
-    color: colors.text,
-    fontWeight: '700',
-  },
-  filterChipTextSelected: {
-    color: colors.onPrimary,
-  },
-  taxonomySection: {
-    gap: Spacing.sm,
-  },
-  taxonomyLabel: {
+  filterSectionTitle: {
     ...Typography.bodySmall,
     color: colors.textSecondary,
     fontWeight: '800',
-  },
-  taxonomyRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Spacing.sm,
-  },
-  taxonomyChip: {
-    minHeight: 32,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceElevated,
-    paddingHorizontal: Spacing.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  taxonomyChipSelected: {
-    borderColor: colors.primary,
-    backgroundColor: colors.surfaceElevated,
-  },
-  taxonomyChipText: {
-    ...Typography.bodySmall,
-    color: colors.textSecondary,
-    fontWeight: '700',
-  },
-  taxonomyChipTextSelected: {
-    color: colors.primary,
-  },
-  statsGrid: {
-    gap: Spacing.sm,
-    marginBottom: Spacing.lg,
-  },
-  statCard: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: Radius.lg,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-    ...Shadows.sm,
-  },
-  statIconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: colors.surfaceElevated,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  statTextWrap: {
-    flex: 1,
-    gap: 2,
-  },
-  statLabel: {
-    ...Typography.bodySmall,
-    color: colors.textSecondary,
-  },
-  statValue: {
-    ...Typography.titleSmall,
-    color: colors.text,
   },
   batchResultCard: {
     backgroundColor: colors.card,
@@ -1922,6 +1616,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: Radius.xl,
     padding: Spacing.lg,
+    marginTop: Spacing.xs,
     marginBottom: Spacing.lg,
     gap: Spacing.md,
     ...Shadows.sm,
@@ -2158,239 +1853,6 @@ const styles = StyleSheet.create({
   },
   list: {
     gap: Spacing.md,
-  },
-  card: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: Radius.xl,
-    overflow: 'hidden',
-    ...Shadows.sm,
-  },
-  cardMainPressable: {
-    padding: Spacing.md,
-    flexDirection: 'row',
-    gap: Spacing.md,
-  },
-  thumbnailFrame: {
-    width: 78,
-    height: 104,
-    borderRadius: Radius.lg,
-    overflow: 'hidden',
-    backgroundColor: '#0F141B',
-  },
-  thumbnail: {
-    width: '100%',
-    height: '100%',
-  },
-  selectionBadge: {
-    position: 'absolute',
-    top: 6,
-    right: 6,
-    backgroundColor: colors.card,
-    borderRadius: 999,
-  },
-  thumbnailPlaceholder: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingHorizontal: 6,
-  },
-  thumbnailPlaceholderText: {
-    color: colors.textTertiary,
-    fontSize: 11,
-    textAlign: 'center',
-    fontWeight: '600',
-  },
-  cardContent: {
-    flex: 1,
-    justifyContent: 'space-between',
-    gap: Spacing.sm,
-  },
-  cardTopRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: Spacing.sm,
-  },
-  cardTitleWrap: {
-    flex: 1,
-    gap: 6,
-  },
-  cardTitle: {
-    color: colors.text,
-    fontSize: 16,
-    fontWeight: '800',
-    lineHeight: 22,
-  },
-  cardMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  cardMeta: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  cardMetaDot: {
-    color: colors.textTertiary,
-    fontSize: 12,
-  },
-  cardBottomRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  statusBadge: {
-    borderRadius: 999,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceElevated,
-  },
-  statusBadgeSuccess: {
-    backgroundColor: 'rgba(53, 199, 111, 0.12)',
-    borderColor: 'rgba(53, 199, 111, 0.28)',
-  },
-  statusBadgeAccent: {
-    backgroundColor: 'rgba(59, 130, 246, 0.12)',
-    borderColor: 'rgba(59, 130, 246, 0.28)',
-  },
-  statusBadgeMuted: {
-    backgroundColor: 'rgba(148, 163, 184, 0.12)',
-    borderColor: 'rgba(148, 163, 184, 0.22)',
-  },
-  statusBadgeDanger: {
-    backgroundColor: 'rgba(239, 68, 68, 0.12)',
-    borderColor: 'rgba(239, 68, 68, 0.24)',
-  },
-  statusBadgeText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-  },
-  statusBadgeTextSuccess: {
-    color: colors.primary,
-  },
-  statusBadgeTextAccent: {
-    color: '#60A5FA',
-  },
-  statusBadgeTextMuted: {
-    color: colors.textSecondary,
-  },
-  statusBadgeTextDanger: {
-    color: '#F87171',
-  },
-  inlineMiniBadge: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  inlineMiniBadgeText: {
-    color: colors.textTertiary,
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  favoriteMiniBadge: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: colors.border,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  favoriteMiniBadgeText: {
-    color: colors.primary,
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  cardActionRow: {
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-  },
-  inlineActionButton: {
-    minHeight: 36,
-    alignSelf: 'flex-start',
-    borderRadius: Radius.lg,
-    paddingHorizontal: Spacing.sm,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  inlineActionButtonText: {
-    color: colors.text,
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  renameCard: {
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    padding: Spacing.md,
-    gap: Spacing.sm,
-    backgroundColor: colors.surfaceElevated,
-  },
-  renameTitle: {
-    ...Typography.bodySmall,
-    color: colors.text,
-    fontWeight: '800',
-  },
-  renameInput: {
-    minHeight: 46,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    color: colors.text,
-    paddingHorizontal: Spacing.md,
-    ...Typography.body,
-  },
-  renameActions: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-  },
-  renamePrimaryButton: {
-    flex: 1,
-    minHeight: 42,
-    borderRadius: Radius.lg,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  renamePrimaryButtonText: {
-    color: colors.onPrimary,
-    fontWeight: '800',
-    fontSize: 14,
-  },
-  renameSecondaryButton: {
-    flex: 1,
-    minHeight: 42,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  renameSecondaryButtonText: {
-    color: colors.text,
-    fontWeight: '700',
-    fontSize: 14,
   },
   pressed: {
     opacity: 0.92,

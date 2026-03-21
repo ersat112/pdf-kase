@@ -8,12 +8,15 @@ import {
   Alert,
   Image,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Screen } from '../../components/common/Screen';
+import { DocumentBottomActionDock } from '../../components/documents/DocumentBottomActionDock';
+import { DocumentPageStrip } from '../../components/documents/DocumentPageStrip';
 import { DocumentPipelineSummaryCard } from '../../components/documents/DocumentPipelineSummaryCard';
 import { LocalTrustBadge } from '../../components/trust/LocalTrustBadge';
 import {
@@ -56,6 +59,7 @@ import {
 import type { RootScreenProps } from '../../navigation/types';
 import { useBillingStore } from '../../store/useBillingStore';
 import {
+  Layout,
   Radius,
   Shadows,
   Spacing,
@@ -322,6 +326,7 @@ export function DocumentDetailScreen({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [translationPreview, setTranslationPreview] =
     useState<TranslationPreview | null>(null);
+  const [selectedPageIndex, setSelectedPageIndex] = useState(0);
 
   const capabilities = useMemo(
     () =>
@@ -385,6 +390,23 @@ export function DocumentDetailScreen({
     });
   }, [document, navigation]);
 
+  useEffect(() => {
+    setSelectedPageIndex(0);
+  }, [documentId, document?.id]);
+
+  const documentPages = useMemo(
+    () => (document && Array.isArray(document.pages) ? document.pages : []),
+    [document],
+  );
+
+  useEffect(() => {
+    if (selectedPageIndex < documentPages.length) {
+      return;
+    }
+
+    setSelectedPageIndex(0);
+  }, [documentPages.length, selectedPageIndex]);
+
   const pageCount = document ? resolveDocumentPageCount(document) : 0;
   const hasPageBasedDocument = pageCount > 0;
   const statusTone = document ? resolveDocumentStatusTone(document) : 'default';
@@ -399,6 +421,9 @@ export function DocumentDetailScreen({
   const documentThumbnailPath = document
     ? resolveDocumentThumbnailPath(document)
     : null;
+
+  const selectedPage = documentPages[selectedPageIndex] ?? null;
+  const previewImageUri = selectedPage?.image_path ?? documentThumbnailPath ?? null;
 
   const pdfActionLabel = documentPdfPath
     ? 'PDF yeniden üret'
@@ -931,6 +956,24 @@ export function DocumentDetailScreen({
     });
   }, [document, hasPageBasedDocument, runAuditedAction]);
 
+  const handlePrimaryShare = useCallback(async () => {
+    if (documentPdfPath) {
+      await handleSharePdf();
+      return;
+    }
+
+    await handleExportPdf();
+  }, [documentPdfPath, handleExportPdf, handleSharePdf]);
+
+  const handlePrintSurface = useCallback(async () => {
+    if (documentPdfPath) {
+      await handleSharePdf();
+      return;
+    }
+
+    await handleExportPdf();
+  }, [documentPdfPath, handleExportPdf, handleSharePdf]);
+
   const pipelineSummary = useMemo(
     () =>
       buildDocumentDetailPipelineSummary({
@@ -953,67 +996,147 @@ export function DocumentDetailScreen({
     ],
   );
 
-  return (
-    <Screen
-      title="Belge Detayı"
-      subtitle="Belgeyi incele, devam et ve son işlemleri yönet."
-    >
-      {loading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.loadingText}>Belge detayı yükleniyor...</Text>
-        </View>
-      ) : errorMessage || !document ? (
-        <View style={styles.errorCard}>
-          <View style={styles.errorIconWrap}>
-            <Ionicons
-              name="alert-circle-outline"
-              size={24}
-              color="#F87171"
-            />
-          </View>
-          <Text style={styles.errorTitle}>Belge açılamadı</Text>
-          <Text style={styles.errorText}>
-            {errorMessage ?? 'Belge kaydı bulunamadı.'}
-          </Text>
+  const dockActions = useMemo(
+    () => [
+      {
+        key: 'edit',
+        label: 'Düzenle',
+        caption: 'Kaşe, imza ve sayfalar',
+        icon: 'create-outline' as const,
+        onPress: handleOpenEditor,
+        disabled: !hasPageBasedDocument || activeActionKey !== null,
+        variant: 'primary' as const,
+      },
+      {
+        key: 'share',
+        label: 'Paylaş',
+        caption: documentPdfPath ? 'PDF hazır' : 'Önce PDF',
+        icon: 'share-social-outline' as const,
+        onPress: () => {
+          void handlePrimaryShare();
+        },
+        disabled:
+          !hasPageBasedDocument || activeActionKey !== null || !billingHydrated,
+        loading: activeActionKey === 'pdf' || activeActionKey === 'share_pdf',
+      },
+      {
+        key: 'word',
+        label: 'Word',
+        caption: documentWordPath ? 'Hazır' : 'Dışa aktar',
+        icon: 'document-text-outline' as const,
+        onPress: () => {
+          void handleExportWord();
+        },
+        disabled:
+          !hasPageBasedDocument || activeActionKey !== null || !billingHydrated,
+        loading: activeActionKey === 'word',
+      },
+      {
+        key: 'print',
+        label: 'Yazdır',
+        caption: documentPdfPath ? 'Sistem paneli' : 'Önce PDF',
+        icon: 'print-outline' as const,
+        onPress: () => {
+          void handlePrintSurface();
+        },
+        disabled:
+          !hasPageBasedDocument || activeActionKey !== null || !billingHydrated,
+        loading: activeActionKey === 'pdf' || activeActionKey === 'share_pdf',
+      },
+    ],
+    [
+      activeActionKey,
+      billingHydrated,
+      documentPdfPath,
+      documentWordPath,
+      handleExportWord,
+      handleOpenEditor,
+      handlePrimaryShare,
+      handlePrintSurface,
+      hasPageBasedDocument,
+    ],
+  );
 
-          <Pressable
-            onPress={() => void loadData(true)}
-            style={({ pressed }) => [
-              styles.primaryButton,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Text style={styles.primaryButtonText}>Tekrar dene</Text>
-          </Pressable>
-        </View>
-      ) : (
-        <>
-          <View style={styles.heroCard}>
-            <View style={styles.heroHeader}>
-              <View style={styles.thumbnailFrame}>
-                {documentThumbnailPath ? (
+  return (
+    <SafeAreaView style={styles.safeArea} edges={['left', 'right', 'bottom']}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        contentInsetAdjustmentBehavior="automatic"
+      >
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={styles.loadingText}>Belge detayı yükleniyor...</Text>
+          </View>
+        ) : errorMessage || !document ? (
+          <View style={styles.errorCard}>
+            <View style={styles.errorIconWrap}>
+              <Ionicons
+                name="alert-circle-outline"
+                size={24}
+                color="#F87171"
+              />
+            </View>
+            <Text style={styles.errorTitle}>Belge açılamadı</Text>
+            <Text style={styles.errorText}>
+              {errorMessage ?? 'Belge kaydı bulunamadı.'}
+            </Text>
+
+            <Pressable
+              onPress={() => void loadData(true)}
+              style={({ pressed }) => [
+                styles.primaryButton,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={styles.primaryButtonText}>Tekrar dene</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <>
+            <View style={styles.previewCard}>
+              <View style={styles.previewFrame}>
+                {previewImageUri ? (
                   <Image
-                    source={{ uri: documentThumbnailPath }}
-                    style={styles.thumbnail}
+                    source={{ uri: previewImageUri }}
+                    resizeMode="cover"
+                    style={styles.previewImage}
                   />
                 ) : (
-                  <View style={styles.thumbnailPlaceholder}>
+                  <View style={styles.previewPlaceholder}>
                     <Ionicons
                       name="document-text-outline"
-                      size={26}
+                      size={32}
                       color={colors.textTertiary}
                     />
-                    <Text style={styles.thumbnailPlaceholderText}>
+                    <Text style={styles.previewPlaceholderText}>
                       Önizleme yok
                     </Text>
                   </View>
                 )}
+
+                <View style={styles.previewFloatingBadge}>
+                  <Text style={styles.previewFloatingBadgeText}>
+                    {selectedPage
+                      ? `Sayfa ${selectedPageIndex + 1}`
+                      : hasPageBasedDocument
+                        ? `${pageCount} sayfa`
+                        : 'Belge önizleme'}
+                  </Text>
+                </View>
               </View>
 
-              <View style={styles.heroContent}>
-                <View style={styles.heroTitleRow}>
-                  <Text style={styles.heroTitle}>{documentTitle}</Text>
+              <View style={styles.previewMetaSection}>
+                <View style={styles.previewTopRow}>
+                  <View style={styles.previewTitleWrap}>
+                    <Text style={styles.previewTitle}>{documentTitle}</Text>
+                    <Text style={styles.previewSubtitle}>
+                      Güncellendi: {formatDateTime(documentUpdatedAt)}
+                    </Text>
+                  </View>
 
                   <Pressable
                     onPress={() => void handleToggleFavorite()}
@@ -1035,10 +1158,6 @@ export function DocumentDetailScreen({
                     )}
                   </Pressable>
                 </View>
-
-                <Text style={styles.heroMeta}>
-                  Güncellendi: {formatDateTime(documentUpdatedAt)}
-                </Text>
 
                 <View style={styles.badgeRow}>
                   <InfoBadge
@@ -1067,496 +1186,470 @@ export function DocumentDetailScreen({
                   {document.collection_name ? (
                     <InfoBadge label={document.collection_name} tone="default" />
                   ) : null}
-                  {document.tag_names.map((tag) => (
+                  {document.tag_names?.map((tag) => (
                     <InfoBadge key={tag} label={`#${tag}`} tone="default" />
                   ))}
+                </View>
+
+                <LocalTrustBadge compact />
+              </View>
+            </View>
+
+            {documentPages.length > 0 ? (
+              <DocumentPageStrip
+                title="Sayfalar"
+                subtitle="Dokun ve büyük önizlemeyi değiştir"
+                items={documentPages.map((page, index) => ({
+                  key: String(page.id),
+                  label: `Sayfa ${index + 1}`,
+                  imageUri: page.image_path,
+                  isActive: selectedPageIndex === index,
+                  badge: page.page_order !== index ? `${page.page_order + 1}` : null,
+                  onPress: () => setSelectedPageIndex(index),
+                }))}
+              />
+            ) : null}
+
+            <DocumentBottomActionDock actions={dockActions} />
+
+            {pipelineSummary ? (
+              <DocumentPipelineSummaryCard
+                title={pipelineSummary.title}
+                subtitle={pipelineSummary.subtitle}
+                message={pipelineSummary.message}
+                tone={pipelineSummary.tone}
+                icon={pipelineSummary.icon}
+                stats={pipelineSummary.stats}
+                actions={pipelineSummary.actions}
+              />
+            ) : null}
+
+            <View style={styles.nextStepCard}>
+              <View style={styles.nextStepHeader}>
+                <View style={styles.nextStepIconWrap}>
+                  <Ionicons
+                    name={
+                      nextStepCard.tone === 'success'
+                        ? 'checkmark-circle-outline'
+                        : nextStepCard.tone === 'accent'
+                          ? 'arrow-forward-circle-outline'
+                          : 'alert-circle-outline'
+                    }
+                    size={20}
+                    color={
+                      nextStepCard.tone === 'success'
+                        ? colors.primary
+                        : nextStepCard.tone === 'accent'
+                          ? '#60A5FA'
+                          : '#FBBF24'
+                    }
+                  />
+                </View>
+                <View style={styles.nextStepTextWrap}>
+                  <Text style={styles.nextStepTitle}>{nextStepCard.title}</Text>
+                  <Text style={styles.nextStepText}>{nextStepCard.text}</Text>
                 </View>
               </View>
             </View>
 
-            <LocalTrustBadge />
-          </View>
+            <View style={styles.planCard}>
+              <View style={styles.planHeader}>
+                <View style={styles.planTextWrap}>
+                  <Text style={styles.planTitle}>
+                    {isPro ? 'Premium aktif' : 'Free plan'}
+                  </Text>
+                  <Text style={styles.planText}>
+                    Plan: {getBillingPlanLabel(plan)}
+                    {expiresAt ? ` • Bitiş: ${formatDateTime(expiresAt)}` : ''}
+                  </Text>
+                </View>
 
-          {pipelineSummary ? (
-            <DocumentPipelineSummaryCard
-              title={pipelineSummary.title}
-              subtitle={pipelineSummary.subtitle}
-              message={pipelineSummary.message}
-              tone={pipelineSummary.tone}
-              icon={pipelineSummary.icon}
-              stats={pipelineSummary.stats}
-              actions={pipelineSummary.actions}
-            />
-          ) : null}
-
-          <View style={styles.nextStepCard}>
-            <View style={styles.nextStepHeader}>
-              <View style={styles.nextStepIconWrap}>
-                <Ionicons
-                  name={
-                    nextStepCard.tone === 'success'
-                      ? 'checkmark-circle-outline'
-                      : nextStepCard.tone === 'accent'
-                        ? 'arrow-forward-circle-outline'
-                        : 'alert-circle-outline'
-                  }
-                  size={20}
-                  color={
-                    nextStepCard.tone === 'success'
-                      ? colors.primary
-                      : nextStepCard.tone === 'accent'
-                        ? '#60A5FA'
-                        : '#FBBF24'
-                  }
-                />
-              </View>
-              <View style={styles.nextStepTextWrap}>
-                <Text style={styles.nextStepTitle}>{nextStepCard.title}</Text>
-                <Text style={styles.nextStepText}>{nextStepCard.text}</Text>
-              </View>
-            </View>
-          </View>
-
-          <View style={styles.planCard}>
-            <View style={styles.planHeader}>
-              <View style={styles.planTextWrap}>
-                <Text style={styles.planTitle}>
-                  {isPro ? 'Premium aktif' : 'Free plan'}
-                </Text>
-                <Text style={styles.planText}>
-                  Plan: {getBillingPlanLabel(plan)}
-                  {expiresAt ? ` • Bitiş: ${formatDateTime(expiresAt)}` : ''}
-                </Text>
+                <Pressable
+                  onPress={() => navigation.navigate('Pricing')}
+                  style={({ pressed }) => [
+                    styles.planActionButton,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text style={styles.planActionButtonText}>
+                    {isPro ? 'Planı gör' : "Premium'u gör"}
+                  </Text>
+                </Pressable>
               </View>
 
-              <Pressable
-                onPress={() => navigation.navigate('Pricing')}
-                style={({ pressed }) => [
-                  styles.planActionButton,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <Text style={styles.planActionButtonText}>
-                  {isPro ? 'Planı gör' : "Premium'u gör"}
-                </Text>
-              </Pressable>
-            </View>
-
-            {!billingHydrated ? (
-              <View style={styles.inlineLoadingRow}>
-                <ActivityIndicator size="small" color={colors.primary} />
-                <Text style={styles.inlineLoadingText}>
-                  Premium durumu yükleniyor...
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.capabilityRow}>
-                <InfoBadge
-                  label={capabilities.canSave ? 'Kaydetme Açık' : 'Kaydetme Kilitli'}
-                  tone={capabilities.canSave ? 'success' : 'warning'}
-                />
-                <InfoBadge
-                  label={capabilities.canShare ? 'Paylaşma Açık' : 'Paylaşma Kilitli'}
-                  tone={capabilities.canShare ? 'success' : 'warning'}
-                />
-                <InfoBadge
-                  label={capabilities.canRemoveAds ? 'Reklamsız' : 'Reklamlı'}
-                  tone={capabilities.canRemoveAds ? 'success' : 'muted'}
-                />
-              </View>
-            )}
-
-            {!isPro ? (
-              <Text style={styles.planHint}>
-                Free kullanıcı tüm araçları deneyebilir. PDF / Word / Excel
-                kaydetme ve paylaşma premium ile açılır.
-              </Text>
-            ) : (
-              <Text style={styles.planHint}>
-                Premium aktif. Export ve paylaşma yüzeyleri açık.
-              </Text>
-            )}
-          </View>
-
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Hızlı işlemler</Text>
-            {activeActionKey ? (
-              <Text style={styles.sectionHint}>İşlem sürüyor</Text>
-            ) : (
-              <Text style={styles.sectionHint}>Tek dokunuşla devam et</Text>
-            )}
-          </View>
-
-          <View style={styles.actionList}>
-            <ActionButton
-              icon="create-outline"
-              label="Editörde aç"
-              caption="Kaşe, imza ve sayfa düzenine devam et"
-              disabled={!hasPageBasedDocument || activeActionKey !== null}
-              loading={activeActionKey === 'editor'}
-              onPress={handleOpenEditor}
-            />
-            <ActionButton
-              icon="scan-outline"
-              label="OCR çıkar"
-              caption="Sayfalardaki metni algıla"
-              disabled={!hasPageBasedDocument || activeActionKey !== null}
-              loading={activeActionKey === 'ocr'}
-              onPress={() => void handleRunOcr()}
-            />
-            <ActionButton
-              icon="document-outline"
-              label={pdfActionLabel}
-              caption={pdfActionCaption}
-              disabled={
-                !hasPageBasedDocument ||
-                activeActionKey !== null ||
-                !billingHydrated
-              }
-              loading={activeActionKey === 'pdf'}
-              onPress={() => void handleExportPdf()}
-            />
-            <ActionButton
-              icon="document-text-outline"
-              label={wordActionLabel}
-              caption={wordActionCaption}
-              disabled={
-                !hasPageBasedDocument ||
-                activeActionKey !== null ||
-                !billingHydrated
-              }
-              loading={activeActionKey === 'word'}
-              onPress={() => void handleExportWord()}
-            />
-            <ActionButton
-              icon="grid-outline"
-              label="Excel dışa aktar"
-              caption={excelActionCaption}
-              disabled={
-                !hasPageBasedDocument ||
-                activeActionKey !== null ||
-                !billingHydrated
-              }
-              loading={activeActionKey === 'excel'}
-              onPress={() => void handleExportExcel()}
-            />
-            <ActionButton
-              icon="language-outline"
-              label="Türkçeye çevir"
-              caption="Algılanan metni Türkçeye çevir"
-              disabled={!hasPageBasedDocument || activeActionKey !== null}
-              loading={activeActionKey === 'translate'}
-              onPress={() => void handleTranslate()}
-            />
-          </View>
-
-          <View style={styles.outputCard}>
-            <View style={styles.outputHeader}>
-              <View style={styles.outputHeaderTextWrap}>
-                <Text style={styles.outputTitle}>Export ve paylaşım</Text>
-                <Text style={styles.outputSubtitle}>
-                  Çıktının hazır olup olmadığını gör ve doğru sonraki aksiyonu tek dokunuşla başlat.
-                </Text>
-              </View>
-              {!isPro ? (
-                <InfoBadge label="Premium yüzeyi" tone="warning" />
+              {!billingHydrated ? (
+                <View style={styles.inlineLoadingRow}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                  <Text style={styles.inlineLoadingText}>
+                    Premium durumu yükleniyor...
+                  </Text>
+                </View>
               ) : (
-                <InfoBadge label="Export açık" tone="success" />
+                <View style={styles.capabilityRow}>
+                  <InfoBadge
+                    label={capabilities.canSave ? 'Kaydetme Açık' : 'Kaydetme Kilitli'}
+                    tone={capabilities.canSave ? 'success' : 'warning'}
+                  />
+                  <InfoBadge
+                    label={capabilities.canShare ? 'Paylaşma Açık' : 'Paylaşma Kilitli'}
+                    tone={capabilities.canShare ? 'success' : 'warning'}
+                  />
+                  <InfoBadge
+                    label={capabilities.canRemoveAds ? 'Reklamsız' : 'Reklamlı'}
+                    tone={capabilities.canRemoveAds ? 'success' : 'muted'}
+                  />
+                </View>
+              )}
+
+              {!isPro ? (
+                <Text style={styles.planHint}>
+                  Free kullanıcı tüm araçları deneyebilir. PDF / Word / Excel
+                  kaydetme ve paylaşma premium ile açılır.
+                </Text>
+              ) : (
+                <Text style={styles.planHint}>
+                  Premium aktif. Export ve paylaşma yüzeyleri açık.
+                </Text>
               )}
             </View>
 
-            <OutputStatusRow
-              title="PDF"
-              description={
-                documentPdfPath
-                  ? capabilities.canShare
-                    ? 'PDF hazır. Şimdi doğrudan paylaşabilir veya yeniden üretebilirsin.'
-                    : 'PDF hazır. Paylaşmak için premium plan gerekir.'
-                  : capabilities.canExportPdf
-                    ? 'Henüz PDF oluşturulmadı. Belgeyi sonuçlandırmak için ilk doğru adım budur.'
-                    : 'PDF kaydetme ve paylaşma premium planda açılır.'
-              }
-              badgeLabel={
-                documentPdfPath
-                  ? 'Hazır'
-                  : capabilities.canExportPdf
-                    ? 'Hazır değil'
-                    : 'Premium gerekli'
-              }
-              badgeTone={
-                documentPdfPath
-                  ? 'success'
-                  : capabilities.canExportPdf
-                    ? 'muted'
-                    : 'warning'
-              }
-              actionLabel={
-                documentPdfPath
-                  ? 'Paylaş'
-                  : billingHydrated
-                    ? capabilities.canExportPdf
-                      ? 'PDF üret'
-                      : 'Premium'
-                    : null
-              }
-              actionDisabled={activeActionKey !== null || !billingHydrated}
-              actionLoading={activeActionKey === 'pdf' || activeActionKey === 'share_pdf'}
-              onPress={
-                documentPdfPath
-                  ? () => {
-                      void handleSharePdf();
-                    }
-                  : () => {
-                      void handleExportPdf();
-                    }
-              }
-            />
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>İkincil işlemler</Text>
+              {activeActionKey ? (
+                <Text style={styles.sectionHint}>İşlem sürüyor</Text>
+              ) : (
+                <Text style={styles.sectionHint}>Detaylı çıktı ve OCR aksiyonları</Text>
+              )}
+            </View>
 
-            <OutputStatusRow
-              title="Word"
-              description={
-                documentWordPath
-                  ? capabilities.canShare
-                    ? 'Word çıktısı hazır. İstersen paylaşabilir veya yeniden üretebilirsin.'
-                    : 'Word hazır. Paylaşmak için premium plan gerekir.'
-                  : capabilities.canExportWord
-                    ? 'Word çıktısı OCR metni üzerinden oluşturulur. Gerekiyorsa OCR otomatik hazırlanır.'
-                    : 'Word çıktısı premium planda açılır.'
-              }
-              badgeLabel={
-                documentWordPath
-                  ? 'Hazır'
-                  : capabilities.canExportWord
-                    ? 'Hazır değil'
-                    : 'Premium gerekli'
-              }
-              badgeTone={
-                documentWordPath
-                  ? 'accent'
-                  : capabilities.canExportWord
-                    ? 'muted'
-                    : 'warning'
-              }
-              actionLabel={
-                documentWordPath
-                  ? 'Paylaş'
-                  : billingHydrated
-                    ? capabilities.canExportWord
-                      ? 'Word üret'
-                      : 'Premium'
-                    : null
-              }
-              actionDisabled={activeActionKey !== null || !billingHydrated}
-              actionLoading={activeActionKey === 'word' || activeActionKey === 'share_word'}
-              onPress={
-                documentWordPath
-                  ? () => {
-                      void handleShareWord();
-                    }
-                  : () => {
-                      void handleExportWord();
-                    }
-              }
-            />
-
-            <OutputStatusRow
-              title="Excel"
-              description={
-                capabilities.canExportExcel
-                  ? 'Excel çıktısı OCR metni üzerinden oluşturulur. Bu yüzey export üretir; kalıcı paylaşım için önce dosya hazırlığı gerekir.'
-                  : 'Excel çıktısı premium planda açılır.'
-              }
-              badgeLabel={capabilities.canExportExcel ? 'İsteğe bağlı' : 'Premium gerekli'}
-              badgeTone={capabilities.canExportExcel ? 'accent' : 'warning'}
-              actionLabel={billingHydrated ? (capabilities.canExportExcel ? 'Excel üret' : 'Premium') : null}
-              actionDisabled={activeActionKey !== null || !billingHydrated}
-              actionLoading={activeActionKey === 'excel'}
-              onPress={() => {
-                void handleExportExcel();
-              }}
-            />
-
-            <View style={styles.shareSummaryCard}>
-              <View style={styles.shareSummaryTextWrap}>
-                <Text style={styles.shareSummaryTitle}>{shareSummary.title}</Text>
-                <Text style={styles.shareSummaryText}>{shareSummary.text}</Text>
-              </View>
-              <InfoBadge
-                label={
-                  shareSummary.tone === 'success'
-                    ? 'Paylaşılabilir'
-                    : shareSummary.tone === 'warning'
-                      ? 'Kilitli'
-                      : 'Bekliyor'
+            <View style={styles.actionList}>
+              <ActionButton
+                icon="scan-outline"
+                label="OCR çıkar"
+                caption="Sayfalardaki metni algıla"
+                disabled={!hasPageBasedDocument || activeActionKey !== null}
+                loading={activeActionKey === 'ocr'}
+                onPress={() => void handleRunOcr()}
+              />
+              <ActionButton
+                icon="document-outline"
+                label={pdfActionLabel}
+                caption={pdfActionCaption}
+                disabled={
+                  !hasPageBasedDocument ||
+                  activeActionKey !== null ||
+                  !billingHydrated
                 }
-                tone={shareSummary.tone}
+                loading={activeActionKey === 'pdf'}
+                onPress={() => void handleExportPdf()}
+              />
+              <ActionButton
+                icon="grid-outline"
+                label="Excel dışa aktar"
+                caption={excelActionCaption}
+                disabled={
+                  !hasPageBasedDocument ||
+                  activeActionKey !== null ||
+                  !billingHydrated
+                }
+                loading={activeActionKey === 'excel'}
+                onPress={() => void handleExportExcel()}
+              />
+              <ActionButton
+                icon="language-outline"
+                label="Türkçeye çevir"
+                caption="Algılanan metni Türkçeye çevir"
+                disabled={!hasPageBasedDocument || activeActionKey !== null}
+                loading={activeActionKey === 'translate'}
+                onPress={() => void handleTranslate()}
               />
             </View>
-          </View>
 
-          {document.ocr_text ? (
-            <View style={styles.resultCard}>
-              <View style={styles.resultHeader}>
-                <Text style={styles.resultTitle}>OCR önizleme</Text>
+            <View style={styles.outputCard}>
+              <View style={styles.outputHeader}>
+                <View style={styles.outputHeaderTextWrap}>
+                  <Text style={styles.outputTitle}>Export ve paylaşım</Text>
+                  <Text style={styles.outputSubtitle}>
+                    Çıktının hazır olup olmadığını gör ve doğru sonraki aksiyonu tek
+                    dokunuşla başlat.
+                  </Text>
+                </View>
+                {!isPro ? (
+                  <InfoBadge label="Premium yüzeyi" tone="warning" />
+                ) : (
+                  <InfoBadge label="Export açık" tone="success" />
+                )}
+              </View>
+
+              <OutputStatusRow
+                title="PDF"
+                description={
+                  documentPdfPath
+                    ? capabilities.canShare
+                      ? 'PDF hazır. Şimdi doğrudan paylaşabilir veya yeniden üretebilirsin.'
+                      : 'PDF hazır. Paylaşmak için premium plan gerekir.'
+                    : capabilities.canExportPdf
+                      ? 'Henüz PDF oluşturulmadı. Belgeyi sonuçlandırmak için ilk doğru adım budur.'
+                      : 'PDF kaydetme ve paylaşma premium planda açılır.'
+                }
+                badgeLabel={
+                  documentPdfPath
+                    ? 'Hazır'
+                    : capabilities.canExportPdf
+                      ? 'Hazır değil'
+                      : 'Premium gerekli'
+                }
+                badgeTone={
+                  documentPdfPath
+                    ? 'success'
+                    : capabilities.canExportPdf
+                      ? 'muted'
+                      : 'warning'
+                }
+                actionLabel={
+                  documentPdfPath
+                    ? 'Paylaş'
+                    : billingHydrated
+                      ? capabilities.canExportPdf
+                        ? 'PDF üret'
+                        : 'Premium'
+                      : null
+                }
+                actionDisabled={activeActionKey !== null || !billingHydrated}
+                actionLoading={activeActionKey === 'pdf' || activeActionKey === 'share_pdf'}
+                onPress={
+                  documentPdfPath
+                    ? () => {
+                        void handleSharePdf();
+                      }
+                    : () => {
+                        void handleExportPdf();
+                      }
+                }
+              />
+
+              <OutputStatusRow
+                title="Word"
+                description={
+                  documentWordPath
+                    ? capabilities.canShare
+                      ? 'Word çıktısı hazır. İstersen paylaşabilir veya yeniden üretebilirsin.'
+                      : 'Word hazır. Paylaşmak için premium plan gerekir.'
+                    : capabilities.canExportWord
+                      ? 'Word çıktısı OCR metni üzerinden oluşturulur. Gerekiyorsa OCR otomatik hazırlanır.'
+                      : 'Word çıktısı premium planda açılır.'
+                }
+                badgeLabel={
+                  documentWordPath
+                    ? 'Hazır'
+                    : capabilities.canExportWord
+                      ? 'Hazır değil'
+                      : 'Premium gerekli'
+                }
+                badgeTone={
+                  documentWordPath
+                    ? 'accent'
+                    : capabilities.canExportWord
+                      ? 'muted'
+                      : 'warning'
+                }
+                actionLabel={
+                  documentWordPath
+                    ? 'Paylaş'
+                    : billingHydrated
+                      ? capabilities.canExportWord
+                        ? 'Word üret'
+                        : 'Premium'
+                      : null
+                }
+                actionDisabled={activeActionKey !== null || !billingHydrated}
+                actionLoading={activeActionKey === 'word' || activeActionKey === 'share_word'}
+                onPress={
+                  documentWordPath
+                    ? () => {
+                        void handleShareWord();
+                      }
+                    : () => {
+                        void handleExportWord();
+                      }
+                }
+              />
+
+              <OutputStatusRow
+                title="Excel"
+                description={
+                  capabilities.canExportExcel
+                    ? 'Excel çıktısı OCR metni üzerinden oluşturulur. Bu yüzey export üretir; kalıcı paylaşım için önce dosya hazırlığı gerekir.'
+                    : 'Excel çıktısı premium planda açılır.'
+                }
+                badgeLabel={capabilities.canExportExcel ? 'İsteğe bağlı' : 'Premium gerekli'}
+                badgeTone={capabilities.canExportExcel ? 'accent' : 'warning'}
+                actionLabel={billingHydrated ? (capabilities.canExportExcel ? 'Excel üret' : 'Premium') : null}
+                actionDisabled={activeActionKey !== null || !billingHydrated}
+                actionLoading={activeActionKey === 'excel'}
+                onPress={() => {
+                  void handleExportExcel();
+                }}
+              />
+
+              <View style={styles.shareSummaryCard}>
+                <View style={styles.shareSummaryTextWrap}>
+                  <Text style={styles.shareSummaryTitle}>{shareSummary.title}</Text>
+                  <Text style={styles.shareSummaryText}>{shareSummary.text}</Text>
+                </View>
                 <InfoBadge
-                  label={document.ocr_status === 'ready' ? 'Hazır' : 'Bekliyor'}
-                  tone={document.ocr_status === 'ready' ? 'success' : 'muted'}
+                  label={
+                    shareSummary.tone === 'success'
+                      ? 'Paylaşılabilir'
+                      : shareSummary.tone === 'warning'
+                        ? 'Kilitli'
+                        : 'Bekliyor'
+                  }
+                  tone={shareSummary.tone}
                 />
               </View>
-              <Text style={styles.resultMeta}>
-                OCR güncelleme: {formatDateTime(document.ocr_updated_at)}
-              </Text>
-              <Text style={styles.resultText} numberOfLines={8}>
-                {document.ocr_text}
-              </Text>
             </View>
-          ) : null}
 
-          {translationPreview ? (
-            <View style={styles.resultCard}>
-              <View style={styles.resultHeader}>
-                <Text style={styles.resultTitle}>Türkçe çeviri önizleme</Text>
-                <InfoBadge label="Hazır" tone="accent" />
+            {document.ocr_text ? (
+              <View style={styles.resultCard}>
+                <View style={styles.resultHeader}>
+                  <Text style={styles.resultTitle}>OCR önizleme</Text>
+                  <InfoBadge
+                    label={document.ocr_status === 'ready' ? 'Hazır' : 'Bekliyor'}
+                    tone={document.ocr_status === 'ready' ? 'success' : 'muted'}
+                  />
+                </View>
+                <Text style={styles.resultMeta}>
+                  OCR güncelleme: {formatDateTime(document.ocr_updated_at)}
+                </Text>
+                <Text style={styles.resultText} numberOfLines={8}>
+                  {document.ocr_text}
+                </Text>
               </View>
-              <Text style={styles.resultMeta}>
-                Kaynak dil: {translationPreview.sourceLanguage ?? 'Bilinmiyor'} •{' '}
-                {formatDateTime(translationPreview.translatedAt)}
-              </Text>
-              <Text style={styles.resultText} numberOfLines={10}>
-                {translationPreview.text}
-              </Text>
+            ) : null}
+
+            {translationPreview ? (
+              <View style={styles.resultCard}>
+                <View style={styles.resultHeader}>
+                  <Text style={styles.resultTitle}>Türkçe çeviri önizleme</Text>
+                  <InfoBadge label="Hazır" tone="accent" />
+                </View>
+                <Text style={styles.resultMeta}>
+                  Kaynak dil: {translationPreview.sourceLanguage ?? 'Bilinmiyor'} •{' '}
+                  {formatDateTime(translationPreview.translatedAt)}
+                </Text>
+                <Text style={styles.resultText} numberOfLines={10}>
+                  {translationPreview.text}
+                </Text>
+              </View>
+            ) : null}
+
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Son işlemler</Text>
+              <Text style={styles.sectionHint}>{auditEntries.length} kayıt</Text>
             </View>
-          ) : null}
 
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Sayfalar</Text>
-            <Text style={styles.sectionHint}>
-              {hasPageBasedDocument ? `${pageCount} kayıt` : 'Sayfa yok'}
-            </Text>
-          </View>
-
-          {!hasPageBasedDocument ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>Sayfa önizlemesi yok</Text>
-              <Text style={styles.emptyText}>
-                Bu belge sayfa tabanlı değil. Düzenleme akışı için kamera veya
-                görsel tabanlı belge kullan.
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.pageList}>
-              {document.pages.map((page, index) => (
-                <Pressable
-                  key={page.id}
-                  onPress={handleOpenEditor}
-                  disabled={activeActionKey !== null}
-                  style={({ pressed }) => [
-                    styles.pageCard,
-                    pressed && activeActionKey === null && styles.pressed,
-                  ]}
-                >
-                  <Image
-                    source={{ uri: page.image_path }}
-                    style={styles.pageThumbnail}
-                  />
-
-                  <View style={styles.pageContent}>
-                    <Text style={styles.pageTitle}>Sayfa {index + 1}</Text>
-                    <Text style={styles.pageMeta}>
-                      Sıra: {page.page_order + 1}
-                    </Text>
-                  </View>
-
-                  <Ionicons
-                    name="chevron-forward"
-                    size={18}
-                    color={colors.textTertiary}
-                  />
-                </Pressable>
-              ))}
-            </View>
-          )}
-
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Son işlemler</Text>
-            <Text style={styles.sectionHint}>{auditEntries.length} kayıt</Text>
-          </View>
-
-          {auditEntries.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>Henüz işlem geçmişi yok</Text>
-              <Text style={styles.emptyText}>
-                OCR, export veya çeviri çalıştırdığında burada son işlemler
-                görünecek.
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.auditList}>
-              {auditEntries.map((item) => (
-                <AuditRow key={item.id} item={item} />
-              ))}
-            </View>
-          )}
-        </>
-      )}
-    </Screen>
+            {auditEntries.length === 0 ? (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyTitle}>Henüz işlem geçmişi yok</Text>
+                <Text style={styles.emptyText}>
+                  OCR, export veya çeviri çalıştırdığında burada son işlemler
+                  görünecek.
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.auditList}>
+                {auditEntries.map((item) => (
+                  <AuditRow key={item.id} item={item} />
+                ))}
+              </View>
+            )}
+          </>
+        )}
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  heroCard: {
+  safeArea: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  scroll: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  content: {
+    paddingHorizontal: Layout.screenHorizontalPadding,
+    paddingTop: Layout.screenVerticalPadding,
+    paddingBottom: Spacing['3xl'],
+    gap: Spacing.lg,
+  },
+  previewCard: {
     backgroundColor: colors.card,
     borderColor: colors.border,
     borderWidth: 1,
     borderRadius: Radius.xl,
-    padding: Spacing.lg,
-    gap: Spacing.md,
-    marginBottom: Spacing.lg,
+    overflow: 'hidden',
     ...Shadows.sm,
   },
-  heroHeader: {
-    flexDirection: 'row',
-    gap: Spacing.md,
-    alignItems: 'flex-start',
-  },
-  thumbnailFrame: {
-    width: 96,
-    height: 128,
-    borderRadius: Radius.lg,
-    overflow: 'hidden',
+  previewFrame: {
+    height: 340,
     backgroundColor: '#0F141B',
+    position: 'relative',
   },
-  thumbnail: {
+  previewImage: {
     width: '100%',
     height: '100%',
   },
-  thumbnailPlaceholder: {
+  previewPlaceholder: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    paddingHorizontal: 8,
   },
-  thumbnailPlaceholderText: {
+  previewPlaceholderText: {
+    ...Typography.bodySmall,
     color: colors.textTertiary,
-    fontSize: 11,
-    fontWeight: '600',
-    textAlign: 'center',
   },
-  heroContent: {
-    flex: 1,
-    gap: 8,
+  previewFloatingBadge: {
+    position: 'absolute',
+    left: Spacing.md,
+    bottom: Spacing.md,
+    minHeight: 30,
+    borderRadius: Radius.full,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(11, 15, 20, 0.18)',
+    backgroundColor: 'rgba(11, 15, 20, 0.78)',
   },
-  heroTitleRow: {
+  previewFloatingBadgeText: {
+    ...Typography.caption,
+    color: colors.text,
+    fontWeight: '800',
+  },
+  previewMetaSection: {
+    padding: Spacing.lg,
+    gap: Spacing.md,
+  },
+  previewTopRow: {
     flexDirection: 'row',
     gap: Spacing.sm,
     alignItems: 'flex-start',
   },
-  heroTitle: {
+  previewTitleWrap: {
     flex: 1,
+    gap: 4,
+  },
+  previewTitle: {
     ...Typography.titleLarge,
     color: colors.text,
-    lineHeight: 28,
+  },
+  previewSubtitle: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
   },
   favoriteButton: {
     width: 40,
@@ -1567,10 +1660,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  heroMeta: {
-    ...Typography.bodySmall,
-    color: colors.textSecondary,
   },
   badgeRow: {
     flexDirection: 'row',
@@ -1637,7 +1726,6 @@ const styles = StyleSheet.create({
     borderRadius: Radius.xl,
     padding: Spacing.lg,
     gap: Spacing.md,
-    marginBottom: Spacing.lg,
     ...Shadows.sm,
   },
   nextStepHeader: {
@@ -1673,7 +1761,6 @@ const styles = StyleSheet.create({
     borderRadius: Radius.xl,
     padding: Spacing.lg,
     gap: Spacing.md,
-    marginBottom: Spacing.lg,
     ...Shadows.sm,
   },
   planHeader: {
@@ -1732,7 +1819,6 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     justifyContent: 'space-between',
     gap: Spacing.md,
-    marginBottom: Spacing.sm,
   },
   sectionTitle: {
     ...Typography.titleLarge,
@@ -1744,7 +1830,6 @@ const styles = StyleSheet.create({
   },
   actionList: {
     gap: Spacing.sm,
-    marginBottom: Spacing.lg,
   },
   actionButton: {
     minHeight: 64,
@@ -1791,7 +1876,6 @@ const styles = StyleSheet.create({
     borderRadius: Radius.xl,
     padding: Spacing.lg,
     gap: Spacing.md,
-    marginBottom: Spacing.lg,
     ...Shadows.sm,
   },
   outputHeader: {
@@ -1892,7 +1976,6 @@ const styles = StyleSheet.create({
     borderRadius: Radius.xl,
     padding: Spacing.lg,
     gap: Spacing.sm,
-    marginBottom: Spacing.lg,
     ...Shadows.sm,
   },
   resultHeader: {
@@ -1912,41 +1995,6 @@ const styles = StyleSheet.create({
   resultText: {
     color: colors.text,
     lineHeight: 22,
-  },
-  pageList: {
-    gap: Spacing.sm,
-    marginBottom: Spacing.lg,
-  },
-  pageCard: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: Radius.xl,
-    padding: Spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-    ...Shadows.sm,
-  },
-  pageThumbnail: {
-    width: 54,
-    height: 72,
-    borderRadius: Radius.md,
-    backgroundColor: '#0F141B',
-  },
-  pageContent: {
-    flex: 1,
-    gap: 4,
-  },
-  pageTitle: {
-    color: colors.text,
-    fontWeight: '800',
-    fontSize: 15,
-  },
-  pageMeta: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
   },
   auditList: {
     gap: Spacing.sm,
@@ -1989,7 +2037,6 @@ const styles = StyleSheet.create({
     borderRadius: Radius.xl,
     padding: Spacing.xl,
     gap: Spacing.sm,
-    marginBottom: Spacing.lg,
     ...Shadows.sm,
   },
   emptyTitle: {
