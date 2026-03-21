@@ -12,7 +12,7 @@ import {
   View,
   type GestureResponderEvent,
   type LayoutChangeEvent,
-  type ViewStyle
+  type ViewStyle,
 } from 'react-native';
 
 import { Screen } from '../../components/common/Screen';
@@ -38,6 +38,10 @@ import {
   type AssetType,
   type StoredAsset,
 } from '../../modules/assets/asset.service';
+import {
+  documentActionLabels,
+  documentEditorCopy,
+} from '../../modules/documents/document-action-copy';
 import {
   getDocumentDetail,
   type DocumentDetail,
@@ -1388,10 +1392,13 @@ export function PdfEditorScreen({ route, navigation }: Props) {
 
   if (loading) {
     return (
-      <Screen title="PDF Editör" subtitle="Editör yükleniyor...">
+      <Screen
+        title={documentEditorCopy.screenTitle}
+        subtitle={documentEditorCopy.loadingSubtitle}
+      >
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.loadingText}>Editör yükleniyor...</Text>
+          <Text style={styles.loadingText}>{documentEditorCopy.loadingText}</Text>
         </View>
       </Screen>
     );
@@ -1399,15 +1406,16 @@ export function PdfEditorScreen({ route, navigation }: Props) {
 
   if (!document || !currentPage) {
     return (
-      <Screen title="PDF Editör" subtitle="Düzenlenebilir sayfa bulunamadı.">
+      <Screen
+        title={documentEditorCopy.screenTitle}
+        subtitle={documentEditorCopy.emptySubtitle}
+      >
         <View style={styles.emptyContainer}>
-          <Text style={styles.emptyTitle}>Bu belgede düzenlenecek sayfa yok</Text>
-          <Text style={styles.emptyText}>
-            Belgeyi tekrar tara veya farklı bir belge seç.
-          </Text>
+          <Text style={styles.emptyTitle}>{documentEditorCopy.emptyTitle}</Text>
+          <Text style={styles.emptyText}>{documentEditorCopy.emptyText}</Text>
 
           <SmallActionButton
-            title="Belge detayına dön"
+            title={documentEditorCopy.backToDetail}
             onPress={() => navigation.goBack()}
           />
         </View>
@@ -1417,16 +1425,20 @@ export function PdfEditorScreen({ route, navigation }: Props) {
 
   return (
     <Screen
-      title="PDF Editör"
-      subtitle="Büyük önizleme üstte, araç sekmeleri altta. Taşı, hizala ve sonuçlandır."
+      title={documentEditorCopy.screenTitle}
+      subtitle={documentEditorCopy.screenSubtitle}
     >
       <View style={styles.heroCard}>
         <View style={styles.heroHeader}>
           <View style={styles.heroTextWrap}>
-            <Text style={styles.heroEyebrow}>Editör oturumu</Text>
+            <Text style={styles.heroEyebrow}>{documentEditorCopy.sessionEyebrow}</Text>
             <Text style={styles.heroTitle}>{document.title || `Belge #${document.id}`}</Text>
             <Text style={styles.heroSubtitle}>
-              Sayfa {currentPageIndex + 1} / {document.pages.length} • Bu sayfada {overlays.length} öğe var
+              {documentEditorCopy.resolveSessionSubtitle(
+                currentPageIndex + 1,
+                document.pages.length,
+                overlays.length,
+              )}
             </Text>
           </View>
 
@@ -1437,12 +1449,12 @@ export function PdfEditorScreen({ route, navigation }: Props) {
 
         <View style={styles.heroActionRow}>
           <SmallActionButton
-            title="Kaşe & İmzalar"
+            title={documentActionLabels.stampsAndSignatures}
             onPress={() => navigation.navigate('StampManager')}
             disabled={busy}
           />
           <SmallActionButton
-            title="Akıllı sil"
+            title={documentActionLabels.smartErase}
             onPress={() =>
               navigation.navigate('SmartErase', {
                 documentId,
@@ -1452,7 +1464,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
             disabled={busy}
           />
           <SmallActionButton
-            title="Kaydet ve dön"
+            title={documentActionLabels.saveAndBack}
             onPress={() => navigation.goBack()}
             disabled={busy}
             active
@@ -1569,7 +1581,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
 
           <View pointerEvents="none" style={styles.previewHintContainer}>
             <Text style={styles.previewHintText}>
-              Boş alana dokun: yerleştir • Öğeyi tut: taşı • Sağ alt tutamaç: büyüt/küçült
+              {documentEditorCopy.previewHint}
             </Text>
 
             {snapGuides.labels.length > 0 ? (
@@ -1590,13 +1602,13 @@ export function PdfEditorScreen({ route, navigation }: Props) {
       </View>
 
       <EditorPageStrip
-        title="Sayfa şeridi"
-        subtitle="Dokunarak sayfa değiştir"
+        title={documentEditorCopy.pageStripTitle}
+        subtitle={documentEditorCopy.pageStripSubtitle}
         items={pageStripItems}
       />
 
       <View style={styles.contextCard}>
-        <Text style={styles.contextLabel}>Aktif durum</Text>
+        <Text style={styles.contextLabel}>{documentEditorCopy.currentStateLabel}</Text>
         <Text style={styles.contextValue}>{viewOverlaySummary}</Text>
       </View>
 
@@ -1604,9 +1616,21 @@ export function PdfEditorScreen({ route, navigation }: Props) {
         activeKey={activeTab}
         onChange={setActiveTab}
         items={[
-          { key: 'view', label: 'Görüntü', icon: 'image-outline' },
-          { key: 'format', label: 'Biçimlendirme', icon: 'options-outline' },
-          { key: 'insert', label: 'Ekle', icon: 'add-circle-outline' },
+          {
+            key: 'view',
+            label: documentEditorCopy.tabLabels.view,
+            icon: 'image-outline',
+          },
+          {
+            key: 'format',
+            label: documentEditorCopy.tabLabels.format,
+            icon: 'options-outline',
+          },
+          {
+            key: 'insert',
+            label: documentEditorCopy.tabLabels.insert,
+            icon: 'add-circle-outline',
+          },
         ]}
       />
 
@@ -1696,24 +1720,22 @@ export function PdfEditorScreen({ route, navigation }: Props) {
       {activeTab === 'view' ? (
         <>
           <View style={styles.viewActionCard}>
-            <Text style={styles.viewActionTitle}>Sayfa görünümü</Text>
-            <Text style={styles.viewActionText}>
-              Hızlı geçiş, imza oluşturma ve sayfa bazlı araçlara bu yüzeyden eriş.
-            </Text>
+            <Text style={styles.viewActionTitle}>{documentEditorCopy.viewTitle}</Text>
+            <Text style={styles.viewActionText}>{documentEditorCopy.viewText}</Text>
 
             <View style={styles.heroActionRow}>
               <SmallActionButton
-                title="Önceki sayfa"
+                title={documentActionLabels.previousPage}
                 onPress={() => handleChangePage(currentPageIndex - 1)}
                 disabled={busy || currentPageIndex === 0}
               />
               <SmallActionButton
-                title="Sonraki sayfa"
+                title={documentActionLabels.nextPage}
                 onPress={() => handleChangePage(currentPageIndex + 1)}
                 disabled={busy || currentPageIndex === document.pages.length - 1}
               />
               <SmallActionButton
-                title="Yeni imza ekle"
+                title={documentActionLabels.newSignature}
                 onPress={() =>
                   navigation.navigate('SignaturePad', {
                     documentId,
@@ -1726,11 +1748,13 @@ export function PdfEditorScreen({ route, navigation }: Props) {
           </View>
 
           <View style={styles.overlayCard}>
-            <Text style={styles.overlayCardTitle}>Bu sayfadaki öğeler</Text>
+            <Text style={styles.overlayCardTitle}>
+              {documentEditorCopy.pageItemsTitle}
+            </Text>
 
             {overlays.length === 0 ? (
               <Text style={styles.overlayEmptyText}>
-                Henüz öğe yok. Kaşe yerleştir veya imza ekle.
+                {documentEditorCopy.pageItemsEmpty}
               </Text>
             ) : (
               overlays.map((overlay, index) => {
