@@ -109,6 +109,12 @@ type OverlayPreviewItem =
       isSelected: boolean;
     };
 
+type SnapGuides = {
+  vertical: number[];
+  horizontal: number[];
+  labels: string[];
+};
+
 const DEFAULT_STAMP_WIDTH_BY_PRESET: Record<StampSizePreset, number> = {
   small: 0.18,
   medium: 0.28,
@@ -121,8 +127,8 @@ const OVERLAY_MIN_WIDTH = 0.08;
 const OVERLAY_MAX_WIDTH = 0.7;
 const OVERLAY_MIN_HEIGHT = 0.04;
 const OVERLAY_MAX_HEIGHT = 0.7;
+const OVERLAY_SNAP_THRESHOLD = 0.025;
 const DEFAULT_SIGNATURE_COLOR = '#111111';
-
 
 function ToolbarButton({
   title,
@@ -281,6 +287,110 @@ function getAssetLabel(type: AssetType) {
   return type === 'stamp' ? 'Kaşe' : 'İmza';
 }
 
+function getSnapTargets(width: number, height: number) {
+  return {
+    horizontal: [
+      { edge: 'left' as const, position: 0, x: 0 },
+      { edge: 'center-x' as const, position: width / 2, x: 0.5 - width / 2 },
+      { edge: 'right' as const, position: 1, x: 1 - width },
+    ],
+    vertical: [
+      { edge: 'top' as const, position: 0, y: 0 },
+      { edge: 'center-y' as const, position: height / 2, y: 0.5 - height / 2 },
+      { edge: 'bottom' as const, position: 1, y: 1 - height },
+    ],
+  };
+}
+
+function applySnapToFrame(frame: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}) {
+  const clamped = clampOverlayFrame(frame);
+  const targets = getSnapTargets(clamped.width, clamped.height);
+  const guides: SnapGuides = {
+    vertical: [],
+    horizontal: [],
+    labels: [],
+  };
+
+  let nextX = clamped.x;
+  let nextY = clamped.y;
+
+  const currentLeft = clamped.x;
+  const currentCenterX = clamped.x + clamped.width / 2;
+  const currentRight = clamped.x + clamped.width;
+
+  const currentTop = clamped.y;
+  const currentCenterY = clamped.y + clamped.height / 2;
+  const currentBottom = clamped.y + clamped.height;
+
+  const horizontalMatches = [
+    {
+      distance: Math.abs(currentLeft - targets.horizontal[0].position),
+      apply: targets.horizontal[0].x,
+      guide: 0,
+      label: 'Sola hizalandı',
+    },
+    {
+      distance: Math.abs(currentCenterX - targets.horizontal[1].position),
+      apply: targets.horizontal[1].x,
+      guide: 0.5,
+      label: 'Yatay merkeze hizalandı',
+    },
+    {
+      distance: Math.abs(currentRight - targets.horizontal[2].position),
+      apply: targets.horizontal[2].x,
+      guide: 1,
+      label: 'Sağa hizalandı',
+    },
+  ].sort((a, b) => a.distance - b.distance);
+
+  if (horizontalMatches[0] && horizontalMatches[0].distance <= OVERLAY_SNAP_THRESHOLD) {
+    nextX = horizontalMatches[0].apply;
+    guides.vertical.push(horizontalMatches[0].guide);
+    guides.labels.push(horizontalMatches[0].label);
+  }
+
+  const verticalMatches = [
+    {
+      distance: Math.abs(currentTop - targets.vertical[0].position),
+      apply: targets.vertical[0].y,
+      guide: 0,
+      label: 'Üste hizalandı',
+    },
+    {
+      distance: Math.abs(currentCenterY - targets.vertical[1].position),
+      apply: targets.vertical[1].y,
+      guide: 0.5,
+      label: 'Dikey merkeze hizalandı',
+    },
+    {
+      distance: Math.abs(currentBottom - targets.vertical[2].position),
+      apply: targets.vertical[2].y,
+      guide: 1,
+      label: 'Alta hizalandı',
+    },
+  ].sort((a, b) => a.distance - b.distance);
+
+  if (verticalMatches[0] && verticalMatches[0].distance <= OVERLAY_SNAP_THRESHOLD) {
+    nextY = verticalMatches[0].apply;
+    guides.horizontal.push(verticalMatches[0].guide);
+    guides.labels.push(verticalMatches[0].label);
+  }
+
+  return {
+    frame: {
+      ...clamped,
+      x: nextX,
+      y: nextY,
+    },
+    guides,
+  };
+}
+
 export function PdfEditorScreen({ route, navigation }: Props) {
   const { documentId } = route.params;
 
@@ -328,10 +438,51 @@ export function PdfEditorScreen({ route, navigation }: Props) {
     [overlays, selectedOverlayId],
   );
 
+  const selectedOverlayAsset = useMemo(() => {
+    if (!selectedOverlay) {
+      return null;
+    }
+
+    const assetId = getOverlayAssetId(selectedOverlay);
+    return allAssets.find((asset) => asset.id === assetId) ?? null;
+  }, [allAssets, selectedOverlay]);
+
   const previewFrame = useMemo(
     () => fitContain(previewSize, pageImageSize),
     [pageImageSize, previewSize],
   );
+
+  const activeOverlayFrame = useMemo(() => {
+    if (!selectedOverlay) {
+      return null;
+    }
+
+    const draft =
+      overlayDraft && overlayDraft.overlayId === selectedOverlay.id
+        ? overlayDraft
+        : selectedOverlay;
+
+    return {
+      x: draft.x,
+      y: draft.y,
+      width: draft.width,
+      height: draft.height,
+      rotation: draft.rotation,
+      opacity: draft.opacity,
+    };
+  }, [overlayDraft, selectedOverlay]);
+
+  const snapGuides = useMemo(() => {
+    if (!activeOverlayFrame || previewFrame.width <= 0 || previewFrame.height <= 0) {
+      return {
+        vertical: [] as number[],
+        horizontal: [] as number[],
+        labels: [] as string[],
+      };
+    }
+
+    return applySnapToFrame(activeOverlayFrame).guides;
+  }, [activeOverlayFrame, previewFrame.height, previewFrame.width]);
 
   const reloadCurrentPageOverlays = useCallback(async () => {
     if (!currentPage) {
@@ -613,7 +764,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
       const relativeX = (locationX - previewFrame.x) / previewFrame.width;
       const relativeY = (locationY - previewFrame.y) / previewFrame.height;
 
-      const nextFrame = clampOverlayFrame({
+      const snapped = applySnapToFrame({
         x: relativeX - resolvedPlacementSize.width / 2,
         y: relativeY - resolvedPlacementSize.height / 2,
         width: resolvedPlacementSize.width,
@@ -634,10 +785,10 @@ export function PdfEditorScreen({ route, navigation }: Props) {
             documentId,
             pageId: currentPage.id,
             assetId: selectedAsset.id,
-            x: nextFrame.x,
-            y: nextFrame.y,
-            width: nextFrame.width,
-            height: nextFrame.height,
+            x: snapped.frame.x,
+            y: snapped.frame.y,
+            width: snapped.frame.width,
+            height: snapped.frame.height,
             opacity: 1,
             rotation: 0,
             strokeColor,
@@ -647,10 +798,10 @@ export function PdfEditorScreen({ route, navigation }: Props) {
             documentId,
             pageId: currentPage.id,
             assetId: selectedAsset.id,
-            x: nextFrame.x,
-            y: nextFrame.y,
-            width: nextFrame.width,
-            height: nextFrame.height,
+            x: snapped.frame.x,
+            y: snapped.frame.y,
+            width: snapped.frame.width,
+            height: snapped.frame.height,
             opacity: 0.95,
             rotation: 0,
           });
@@ -755,7 +906,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
       const deltaX = (event.nativeEvent.pageX - session.startPageX) / previewFrame.width;
       const deltaY = (event.nativeEvent.pageY - session.startPageY) / previewFrame.height;
 
-      const nextFrame = clampOverlayFrame({
+      const snapped = applySnapToFrame({
         x: session.initialX + deltaX,
         y: session.initialY + deltaY,
         width: session.width,
@@ -764,10 +915,10 @@ export function PdfEditorScreen({ route, navigation }: Props) {
 
       setOverlayDraft({
         overlayId: session.overlayId,
-        x: nextFrame.x,
-        y: nextFrame.y,
-        width: nextFrame.width,
-        height: nextFrame.height,
+        x: snapped.frame.x,
+        y: snapped.frame.y,
+        width: snapped.frame.width,
+        height: snapped.frame.height,
         rotation: session.rotation,
         opacity: session.opacity,
       });
@@ -817,7 +968,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
       const deltaX = (event.nativeEvent.pageX - session.startPageX) / previewFrame.width;
       const deltaY = (event.nativeEvent.pageY - session.startPageY) / previewFrame.height;
 
-      const nextFrame = clampOverlayFrame({
+      const snapped = applySnapToFrame({
         x: session.initialX,
         y: session.initialY,
         width: session.initialWidth + deltaX,
@@ -826,10 +977,10 @@ export function PdfEditorScreen({ route, navigation }: Props) {
 
       setOverlayDraft({
         overlayId: session.overlayId,
-        x: nextFrame.x,
-        y: nextFrame.y,
-        width: nextFrame.width,
-        height: nextFrame.height,
+        x: snapped.frame.x,
+        y: snapped.frame.y,
+        width: snapped.frame.width,
+        height: snapped.frame.height,
         rotation: session.rotation,
         opacity: session.opacity,
       });
@@ -881,7 +1032,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
 
       const delta = scaleDirection === 'up' ? OVERLAY_SCALE_STEP : -OVERLAY_SCALE_STEP;
 
-      const nextFrame = clampOverlayFrame({
+      const snapped = applySnapToFrame({
         x: selectedOverlay.x,
         y: selectedOverlay.y,
         width: selectedOverlay.width + delta,
@@ -893,10 +1044,10 @@ export function PdfEditorScreen({ route, navigation }: Props) {
 
         await updateOverlayTransform({
           overlayId: selectedOverlay.id,
-          x: nextFrame.x,
-          y: nextFrame.y,
-          width: nextFrame.width,
-          height: nextFrame.height,
+          x: snapped.frame.x,
+          y: snapped.frame.y,
+          width: snapped.frame.width,
+          height: snapped.frame.height,
           rotation: selectedOverlay.rotation,
           opacity: selectedOverlay.opacity,
         });
@@ -904,6 +1055,50 @@ export function PdfEditorScreen({ route, navigation }: Props) {
         await reloadCurrentPageOverlays();
       } catch (error) {
         Alert.alert('Hata', getErrorMessage(error, 'Öğe boyutu güncellenemedi.'));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [reloadCurrentPageOverlays, selectedOverlay],
+  );
+
+  const applySelectedOverlayPreset = useCallback(
+    async (preset: StampSizePreset) => {
+      if (!selectedOverlay) {
+        Alert.alert('Öğe seç', 'Önce hazır boyut uygulamak istediğin öğeyi seç.');
+        return;
+      }
+
+      const targetWidth = DEFAULT_STAMP_WIDTH_BY_PRESET[preset];
+      const ratio =
+        selectedOverlay.width > 0 && selectedOverlay.height > 0
+          ? selectedOverlay.height / selectedOverlay.width
+          : 0.55;
+      const targetHeight = targetWidth * ratio;
+
+      const snapped = applySnapToFrame({
+        x: selectedOverlay.x,
+        y: selectedOverlay.y,
+        width: targetWidth,
+        height: targetHeight,
+      });
+
+      try {
+        setBusy(true);
+
+        await updateOverlayTransform({
+          overlayId: selectedOverlay.id,
+          x: snapped.frame.x,
+          y: snapped.frame.y,
+          width: snapped.frame.width,
+          height: snapped.frame.height,
+          rotation: selectedOverlay.rotation,
+          opacity: selectedOverlay.opacity,
+        });
+
+        await reloadCurrentPageOverlays();
+      } catch (error) {
+        Alert.alert('Hata', getErrorMessage(error, 'Hazır boyut uygulanamadı.'));
       } finally {
         setBusy(false);
       }
@@ -1039,7 +1234,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
   return (
     <Screen
       title="PDF Editör"
-      subtitle="Öğeyi tutup sürükle, sağ alt tutamaçtan boyutlandır."
+      subtitle="Öğeyi tutup sürükle, sağ alt tutamaçtan boyutlandır, çizgilere yaklaşınca hizalamaya yapışır."
     >
       <View style={styles.summaryCard}>
         <View style={styles.summaryTextBlock}>
@@ -1166,18 +1361,9 @@ export function PdfEditorScreen({ route, navigation }: Props) {
           <Text style={styles.adjustHint}>
             {formatOverlaySize(selectedOverlay)} • {formatOverlayOpacity(selectedOverlay.opacity)}
           </Text>
-
-          {selectedOverlay.type === 'signature' ? (
-            <Text style={styles.readySignatureHint}>
-              İmza asset olarak yerleşir. Konum, boyut ve opaklık düzenlenebilir.
-            </Text>
-          ) : null}
-
-          {selectedOverlay.type === 'signature' ? (
-            <Text style={styles.readySignatureHint}>
-              İmza asset olarak yerleşir. Konum, boyut ve opaklık düzenlenebilir.
-            </Text>
-          ) : null}
+          <Text style={styles.adjustHint}>
+            {selectedOverlayAsset?.name ?? 'Öğe'} • Kenarlar ve merkez çizgileri yakalandığında hizalama kilitlenir.
+          </Text>
 
           <View style={styles.adjustRow}>
             <ToolbarButton
@@ -1191,6 +1377,30 @@ export function PdfEditorScreen({ route, navigation }: Props) {
               title="Büyüt"
               onPress={() => {
                 void updateSelectedOverlaySize('up');
+              }}
+              disabled={busy}
+            />
+          </View>
+
+          <View style={styles.adjustRow}>
+            <ToolbarButton
+              title="Preset: Küçük"
+              onPress={() => {
+                void applySelectedOverlayPreset('small');
+              }}
+              disabled={busy}
+            />
+            <ToolbarButton
+              title="Preset: Orta"
+              onPress={() => {
+                void applySelectedOverlayPreset('medium');
+              }}
+              disabled={busy}
+            />
+            <ToolbarButton
+              title="Preset: Büyük"
+              onPress={() => {
+                void applySelectedOverlayPreset('large');
               }}
               disabled={busy}
             />
@@ -1212,6 +1422,16 @@ export function PdfEditorScreen({ route, navigation }: Props) {
               disabled={busy}
             />
           </View>
+
+          {selectedOverlay.type === 'signature' ? (
+            <Text style={styles.readySignatureHint}>
+              İmza asset olarak yerleşir. Konum, preset boyut ve opaklık tek model üzerinden yönetilir.
+            </Text>
+          ) : (
+            <Text style={styles.readySignatureHint}>
+              Kaşe seçildi. Sürüklerken sayfa kenarı ve merkeze yapışma çizgileri görünür.
+            </Text>
+          )}
         </View>
       ) : null}
 
@@ -1227,6 +1447,36 @@ export function PdfEditorScreen({ route, navigation }: Props) {
           onPress={handlePlaceSelectedAsset}
           disabled={busy}
         />
+
+        {snapGuides.vertical.map((position, index) => (
+          <View
+            key={`snap-v-${position}-${index}`}
+            pointerEvents="none"
+            style={[
+              styles.snapGuideVertical,
+              {
+                left: previewFrame.x + position * previewFrame.width,
+                top: previewFrame.y,
+                height: previewFrame.height,
+              },
+            ]}
+          />
+        ))}
+
+        {snapGuides.horizontal.map((position, index) => (
+          <View
+            key={`snap-h-${position}-${index}`}
+            pointerEvents="none"
+            style={[
+              styles.snapGuideHorizontal,
+              {
+                left: previewFrame.x,
+                top: previewFrame.y + position * previewFrame.height,
+                width: previewFrame.width,
+              },
+            ]}
+          />
+        ))}
 
         {overlayPreviewItems.map((item) => (
           <View
@@ -1253,23 +1503,35 @@ export function PdfEditorScreen({ route, navigation }: Props) {
                 resizeMode="contain"
                 style={styles.overlayImage}
               />
+
+              {item.isSelected ? (
+                <View pointerEvents="none" style={styles.overlaySelectionBadge}>
+                  <Text style={styles.overlaySelectionBadgeText}>
+                    {item.kind === 'stamp' ? 'Kaşe' : 'İmza'} • {item.asset.name}
+                  </Text>
+                </View>
+              ) : null}
             </View>
 
             {item.isSelected ? (
-              <View
-                style={styles.resizeHandleHitArea}
-                onStartShouldSetResponder={() => !busy}
-                onResponderGrant={(event) => handleOverlayResizeStart(item.overlay, event)}
-                onResponderMove={handleOverlayResizeMove}
-                onResponderRelease={() => {
-                  void handleOverlayResizeEnd();
-                }}
-                onResponderTerminate={() => {
-                  void handleOverlayResizeEnd();
-                }}
-              >
-                <View style={styles.resizeHandle} />
-              </View>
+              <>
+                <View pointerEvents="none" style={styles.overlayCenterDot} />
+
+                <View
+                  style={styles.resizeHandleHitArea}
+                  onStartShouldSetResponder={() => !busy}
+                  onResponderGrant={(event) => handleOverlayResizeStart(item.overlay, event)}
+                  onResponderMove={handleOverlayResizeMove}
+                  onResponderRelease={() => {
+                    void handleOverlayResizeEnd();
+                  }}
+                  onResponderTerminate={() => {
+                    void handleOverlayResizeEnd();
+                  }}
+                >
+                  <View style={styles.resizeHandle} />
+                </View>
+              </>
             ) : null}
           </View>
         ))}
@@ -1278,6 +1540,14 @@ export function PdfEditorScreen({ route, navigation }: Props) {
           <Text style={styles.previewHintText}>
             Boş alana dokun: seçili {activeLibraryType === 'stamp' ? 'kaşe' : 'hazır imza'} • Öğeyi tut ve sürükle: taşı • Sağ alt tutamaç: büyüt/küçült
           </Text>
+
+          {snapGuides.labels.length > 0 ? (
+            <View style={styles.snapHintPill}>
+              <Text style={styles.snapHintPillText}>
+                {snapGuides.labels.join(' • ')}
+              </Text>
+            </View>
+          ) : null}
         </View>
 
         {busy ? (
@@ -1371,7 +1641,6 @@ export function PdfEditorScreen({ route, navigation }: Props) {
                   <Text style={styles.overlayRowHint}>
                     {formatOverlaySize(overlay)} • {formatOverlayOpacity(overlay.opacity)}
                   </Text>
-
                 </View>
 
                 <ToolbarButton
@@ -1476,11 +1745,6 @@ const styles = StyleSheet.create({
   toolbarButtonTextDanger: {
     color: '#FCA5A5',
   },
-  colorSwatchInner: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-  },
   sizeCard: {
     backgroundColor: colors.card,
     borderColor: colors.border,
@@ -1527,7 +1791,7 @@ const styles = StyleSheet.create({
   },
   readySignatureHint: {
     ...Typography.bodySmall,
-    color: colors.textSecondary,
+    color: colors.muted,
   },
   pressed: {
     opacity: 0.92,
@@ -1550,6 +1814,16 @@ const styles = StyleSheet.create({
   previewHitArea: {
     ...StyleSheet.absoluteFillObject,
   },
+  snapGuideVertical: {
+    position: 'absolute',
+    width: 1,
+    backgroundColor: 'rgba(53, 199, 111, 0.75)',
+  },
+  snapGuideHorizontal: {
+    position: 'absolute',
+    height: 1,
+    backgroundColor: 'rgba(53, 199, 111, 0.75)',
+  },
   overlayContentBox: {
     width: '100%',
     height: '100%',
@@ -1557,12 +1831,13 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: 'transparent',
+    backgroundColor: 'rgba(255,255,255,0.01)',
   },
   overlayContentBoxSelected: {
     borderWidth: 2,
     borderColor: colors.primary,
     shadowColor: colors.primary,
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.24,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 0 },
     elevation: 4,
@@ -1571,13 +1846,33 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  signatureOverlayBox: {
-    width: '100%',
-    height: '100%',
-    backgroundColor: 'transparent',
+  overlaySelectionBadge: {
+    position: 'absolute',
+    left: 6,
+    top: 6,
+    right: 6,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(11, 15, 20, 0.72)',
   },
-  signatureOverlayBoxSelected: {
-    backgroundColor: 'rgba(255,255,255,0.04)',
+  overlaySelectionBadgeText: {
+    color: '#E5EEF7',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  overlayCenterDot: {
+    position: 'absolute',
+    left: '50%',
+    top: '50%',
+    marginLeft: -4,
+    marginTop: -4,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.primary,
+    borderWidth: 1,
+    borderColor: colors.background,
   },
   resizeHandleHitArea: {
     position: 'absolute',
@@ -1601,6 +1896,7 @@ const styles = StyleSheet.create({
     left: 12,
     right: 12,
     bottom: 12,
+    gap: 8,
   },
   previewHintText: {
     color: '#CBD5E1',
@@ -1611,6 +1907,20 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 10,
     borderRadius: 10,
+  },
+  snapHintPill: {
+    alignSelf: 'center',
+    backgroundColor: 'rgba(53, 199, 111, 0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(53, 199, 111, 0.32)',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  snapHintPillText: {
+    color: '#CFF7DE',
+    fontSize: 12,
+    fontWeight: '700',
   },
   busyOverlay: {
     ...StyleSheet.absoluteFillObject,
