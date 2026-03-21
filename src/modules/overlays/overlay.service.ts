@@ -645,16 +645,26 @@ export async function updateSignatureOverlayStyle(
     throw new Error('Sadece imza overlay renk güncellemesi destekleniyor.');
   }
 
+  const parsed = safeParseOverlayContent(overlay.content);
+  const existingAssetId =
+    typeof parsed?.assetId === 'number' && Number.isFinite(parsed.assetId)
+      ? parsed.assetId
+      : null;
   const existingStrokes = getOverlaySignatureStrokes(overlay);
-
-  if (!existingStrokes.length) {
-    throw new Error('Güncellenecek geçerli imza verisi bulunamadı.');
-  }
-
   const currentOpacity = clamp01(payload.opacity ?? overlay.opacity);
   const nextColor = normalizeSignatureColor(
     payload.strokeColor ?? getOverlaySignatureColor(overlay),
   );
+
+  let nextContent: string;
+
+  if (existingAssetId) {
+    nextContent = buildSignatureAssetOverlayContent(existingAssetId, nextColor);
+  } else if (existingStrokes.length) {
+    nextContent = buildSignatureOverlayContent(existingStrokes, nextColor);
+  } else {
+    throw new Error('Güncellenecek geçerli imza verisi bulunamadı.');
+  }
 
   const db = await getDb();
 
@@ -666,7 +676,7 @@ export async function updateSignatureOverlayStyle(
         opacity = ?
       WHERE id = ?
     `,
-    buildSignatureOverlayContent(existingStrokes, nextColor),
+    nextContent,
     currentOpacity,
     payload.overlayId,
   );
