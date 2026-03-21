@@ -2,15 +2,15 @@
 import { create } from 'zustand';
 
 import type {
-    BillingPlan,
-    BillingState,
+  BillingPlan,
+  BillingState,
 } from '../modules/billing/billing.service';
 import {
-    clearStoredBillingState,
-    defaultBillingState,
-    getStoredBillingState,
-    normalizeBillingState,
-    setStoredBillingState,
+  clearStoredBillingState,
+  defaultBillingState,
+  getStoredBillingState,
+  normalizeBillingState,
+  setStoredBillingState,
 } from '../modules/billing/billing.service';
 
 type BillingStore = BillingState & {
@@ -102,6 +102,14 @@ export const useBillingStore = create<BillingStore>()((set, get) => ({
       isPro: plan !== 'free',
       plan,
       expiresAt: createExpiry(plan),
+      metadata:
+        plan === 'free'
+          ? defaultBillingState.metadata
+          : {
+              mode: 'mock',
+              updatedAt: new Date().toISOString(),
+              version: 'v1',
+            },
     });
 
     await persistResolvedBillingState(nextState);
