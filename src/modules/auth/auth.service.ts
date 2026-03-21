@@ -7,9 +7,17 @@ export type AuthUser = {
   email: string;
 };
 
+export type AuthSessionMetadata = {
+  authMode: 'mock_local';
+  provider: 'local_mock';
+  createdAt: string;
+  version: 'v2';
+};
+
 export type AuthSession = {
   accessToken: string;
   user: AuthUser;
+  metadata?: AuthSessionMetadata | null;
 };
 
 const AUTH_SESSION_KEY = 'pdf-kase.auth.session.v1';
@@ -28,6 +36,22 @@ function normalizeName(inputName: string | undefined, email: string) {
   return normalized && normalized.length >= 2 ? normalized : fallback;
 }
 
+function isValidSessionMetadata(value: unknown): value is AuthSessionMetadata {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const metadata = value as Partial<AuthSessionMetadata>;
+
+  return Boolean(
+    metadata.authMode === 'mock_local' &&
+      metadata.provider === 'local_mock' &&
+      metadata.version === 'v2' &&
+      typeof metadata.createdAt === 'string' &&
+      metadata.createdAt.trim().length > 0,
+  );
+}
+
 function isValidSession(value: unknown): value is AuthSession {
   if (!value || typeof value !== 'object') {
     return false;
@@ -35,7 +59,7 @@ function isValidSession(value: unknown): value is AuthSession {
 
   const session = value as Partial<AuthSession>;
 
-  return Boolean(
+  const baseValid = Boolean(
     typeof session.accessToken === 'string' &&
       session.accessToken.length > 0 &&
       session.user &&
@@ -46,6 +70,33 @@ function isValidSession(value: unknown): value is AuthSession {
       typeof session.user.email === 'string' &&
       session.user.email.length > 0,
   );
+
+  if (!baseValid) {
+    return false;
+  }
+
+  if (session.metadata == null) {
+    return true;
+  }
+
+  return isValidSessionMetadata(session.metadata);
+}
+
+export function isMockAuthSession(session: AuthSession | null | undefined) {
+  if (!session) {
+    return false;
+  }
+
+  return (
+    session.accessToken.startsWith('mock_') ||
+    session.metadata?.authMode === 'mock_local'
+  );
+}
+
+export function getAuthSessionRuntimeLabel(
+  session: AuthSession | null | undefined,
+) {
+  return isMockAuthSession(session) ? 'Mock local oturum' : 'Oturum';
 }
 
 export async function getStoredSession(): Promise<AuthSession | null> {
@@ -94,6 +145,7 @@ export async function createLocalSession(input: {
   }
 
   const name = normalizeName(input.name, email);
+  const now = new Date().toISOString();
 
   return {
     accessToken: generateMockToken(email),
@@ -101,6 +153,12 @@ export async function createLocalSession(input: {
       id: `user_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       name,
       email,
+    },
+    metadata: {
+      authMode: 'mock_local',
+      provider: 'local_mock',
+      createdAt: now,
+      version: 'v2',
     },
   };
 }
