@@ -6,7 +6,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -15,10 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { createAssetFromImage } from '../../modules/assets/asset.service';
-import {
-  addSignatureAssetOverlay,
-  type SignatureStroke,
-} from '../../modules/overlays/overlay.service';
+import { addSignatureAssetOverlay, type SignatureStroke } from '../../modules/overlays/overlay.service';
 import { createTrimmedSignatureImage } from '../../modules/signatures/signature-image';
 import { removeFileIfExists } from '../../modules/storage/file.service';
 import type { RootStackParamList } from '../../navigation/types';
@@ -45,27 +41,6 @@ const DEFAULT_SIGNATURE_FRAME = {
 };
 
 const DEFAULT_SIGNATURE_COLOR = '#111111';
-
-const SIGNATURE_COLORS = [
-  '#111111',
-  '#1F2937',
-  '#374151',
-  '#4B5563',
-  '#1D4ED8',
-  '#2563EB',
-  '#0F766E',
-  '#0D9488',
-  '#7C3AED',
-  '#9333EA',
-  '#B45309',
-  '#D97706',
-  '#B91C1C',
-  '#DC2626',
-  '#166534',
-  '#15803D',
-  '#0F172A',
-  '#334155',
-] as const;
 
 const STROKE_WIDTH_PRESETS: StrokeWidthPreset[] = [
   { key: 'fine', label: 'İnce', value: 2.5 },
@@ -231,33 +206,6 @@ function ActionButton({
   );
 }
 
-function ColorSwatch({
-  color,
-  selected,
-  onPress,
-  disabled,
-}: {
-  color: string;
-  selected: boolean;
-  onPress: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      style={({ pressed }) => [
-        styles.colorSwatchOuter,
-        selected && styles.colorSwatchOuterSelected,
-        disabled && styles.buttonDisabled,
-        pressed && !disabled && styles.pressed,
-      ]}
-    >
-      <View style={[styles.colorSwatchInner, { backgroundColor: color }]} />
-    </Pressable>
-  );
-}
-
 function WidthPresetChip({
   label,
   selected,
@@ -307,7 +255,6 @@ export function SignaturePadScreen({ route, navigation }: Props) {
   const [padWidth, setPadWidth] = useState(0);
   const [padHeight, setPadHeight] = useState(0);
   const [strokes, setStrokes] = useState<SignatureStroke[]>([]);
-  const [selectedColor, setSelectedColor] = useState(DEFAULT_SIGNATURE_COLOR);
   const [selectedStrokeWidth, setSelectedStrokeWidth] = useState(
     STROKE_WIDTH_PRESETS[1].value,
   );
@@ -468,7 +415,7 @@ export function SignaturePadScreen({ route, navigation }: Props) {
         previewSourceUri: trimmed.previewSourceUri,
         type: 'signature',
         metadata: {
-          strokeColor: selectedColor,
+          strokeColor: DEFAULT_SIGNATURE_COLOR,
           strokeCount: normalized.length,
           pointCount: normalized.reduce((sum, stroke) => sum + stroke.length, 0),
           strokeWidth: selectedStrokeWidth,
@@ -485,7 +432,7 @@ export function SignaturePadScreen({ route, navigation }: Props) {
         width: DEFAULT_SIGNATURE_FRAME.width,
         height: DEFAULT_SIGNATURE_FRAME.height,
         opacity: 1,
-        strokeColor: selectedColor,
+        strokeColor: DEFAULT_SIGNATURE_COLOR,
       });
 
       navigation.replace('PdfEditor', { documentId });
@@ -503,7 +450,6 @@ export function SignaturePadScreen({ route, navigation }: Props) {
     padHeight,
     padWidth,
     pageId,
-    selectedColor,
     selectedStrokeWidth,
     strokes,
   ]);
@@ -518,8 +464,8 @@ export function SignaturePadScreen({ route, navigation }: Props) {
           <View style={styles.headerTextBlock}>
             <Text style={styles.title}>İmza Oluştur</Text>
             <Text style={styles.subtitle}>
-              Yatay imza alanında imzanı at, gerekirse son çizgiyi geri al ve
-              trim edilmiş olarak belgeye yerleştir.
+              İmzayı burada siyah olarak kaydet. PDF editörüne döndüğünde
+              yerleştirilen imzanın rengini ve boyutunu değiştirebilirsin.
             </Text>
 
             <View style={styles.metaRow}>
@@ -548,7 +494,7 @@ export function SignaturePadScreen({ route, navigation }: Props) {
               disabled={busy}
             />
             <ActionButton
-              title="Kaydet ve yerleştir"
+              title="Kaydet ve editöre dön"
               onPress={() => {
                 void handleSave();
               }}
@@ -559,26 +505,6 @@ export function SignaturePadScreen({ route, navigation }: Props) {
         </View>
 
         <View style={styles.controlsCard}>
-          <View style={styles.controlSection}>
-            <Text style={styles.controlLabel}>Renk</Text>
-
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.paletteRow}
-            >
-              {SIGNATURE_COLORS.map((color) => (
-                <ColorSwatch
-                  key={color}
-                  color={color}
-                  selected={selectedColor === color}
-                  onPress={() => setSelectedColor(color)}
-                  disabled={busy}
-                />
-              ))}
-            </ScrollView>
-          </View>
-
           <View style={styles.controlSection}>
             <Text style={styles.controlLabel}>Kalem kalınlığı</Text>
 
@@ -597,62 +523,64 @@ export function SignaturePadScreen({ route, navigation }: Props) {
         </View>
 
         <View style={styles.padCard}>
-          <Text style={styles.cardTitle}>Geniş imza alanı</Text>
+          <Text style={styles.cardTitle}>İmza alanı</Text>
           <Text style={styles.cardHint}>
-            Parmağınla veya kalemle imzanı at. Kayıt sırasında görsel, çizginin
-            gerçek sınırlarına göre kırpılır ve kütüphaneye temiz küçük resim
-            olarak kaydedilir.
+            Beyaz pad her açılışta görünür olacak şekilde sabit yüzeyde tutulur.
+            Kayıt sırasında çizim gerçek sınırlarına göre kırpılır ve kütüphaneye
+            küçük resim olarak kaydedilir.
           </Text>
 
-          <View
-            style={styles.signaturePad}
-            onLayout={handlePadLayout}
-            onStartShouldSetResponder={() => true}
-            onMoveShouldSetResponder={() => true}
-            onResponderGrant={(event) => {
-              drawingRef.current = true;
-              appendPoint(
-                event.nativeEvent.locationX,
-                event.nativeEvent.locationY,
-                true,
-              );
-            }}
-            onResponderMove={(event) => {
-              if (!drawingRef.current) {
-                return;
-              }
+          <View style={styles.padSurface}>
+            <View
+              style={styles.signaturePad}
+              onLayout={handlePadLayout}
+              onStartShouldSetResponder={() => true}
+              onMoveShouldSetResponder={() => true}
+              onResponderGrant={(event) => {
+                drawingRef.current = true;
+                appendPoint(
+                  event.nativeEvent.locationX,
+                  event.nativeEvent.locationY,
+                  true,
+                );
+              }}
+              onResponderMove={(event) => {
+                if (!drawingRef.current) {
+                  return;
+                }
 
-              appendPoint(
-                event.nativeEvent.locationX,
-                event.nativeEvent.locationY,
-                false,
-              );
-            }}
-            onResponderRelease={() => {
-              drawingRef.current = false;
-            }}
-            onResponderTerminate={() => {
-              drawingRef.current = false;
-            }}
-          >
-            <Canvas ref={canvasRef} style={StyleSheet.absoluteFill}>
-              <Path
-                path={signaturePath}
-                color={selectedColor}
-                style="stroke"
-                strokeWidth={selectedStrokeWidth}
-                strokeCap="round"
-                strokeJoin="round"
-              />
-            </Canvas>
+                appendPoint(
+                  event.nativeEvent.locationX,
+                  event.nativeEvent.locationY,
+                  false,
+                );
+              }}
+              onResponderRelease={() => {
+                drawingRef.current = false;
+              }}
+              onResponderTerminate={() => {
+                drawingRef.current = false;
+              }}
+            >
+              <Canvas ref={canvasRef} style={StyleSheet.absoluteFill}>
+                <Path
+                  path={signaturePath}
+                  color={DEFAULT_SIGNATURE_COLOR}
+                  style="stroke"
+                  strokeWidth={selectedStrokeWidth}
+                  strokeCap="round"
+                  strokeJoin="round"
+                />
+              </Canvas>
 
-            <View pointerEvents="none" style={styles.baseline} />
+              <View pointerEvents="none" style={styles.baseline} />
 
-            {!canSave ? (
-              <View pointerEvents="none" style={styles.placeholderWrap}>
-                <Text style={styles.placeholderText}>Buraya imza at</Text>
-              </View>
-            ) : null}
+              {!canSave ? (
+                <View pointerEvents="none" style={styles.placeholderWrap}>
+                  <Text style={styles.placeholderText}>Buraya imza at</Text>
+                </View>
+              ) : null}
+            </View>
           </View>
         </View>
       </View>
@@ -721,7 +649,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: Radius.xl,
     padding: Spacing.lg,
-    gap: Spacing.lg,
+    gap: Spacing.md,
     ...Shadows.sm,
   },
   controlSection: {
@@ -732,34 +660,10 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontWeight: '700',
   },
-  paletteRow: {
-    gap: Spacing.sm,
-    paddingRight: Spacing.lg,
-  },
   widthRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.sm,
-  },
-  colorSwatchOuter: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  colorSwatchOuterSelected: {
-    borderWidth: 2,
-    borderColor: colors.primary,
-    transform: [{ scale: 1.06 }],
-  },
-  colorSwatchInner: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
   },
   widthChip: {
     backgroundColor: colors.surfaceElevated,
@@ -771,7 +675,7 @@ const styles = StyleSheet.create({
   },
   widthChipSelected: {
     borderColor: colors.primary,
-    backgroundColor: colors.primary + '14',
+    backgroundColor: `${colors.primary}14`,
   },
   widthChipText: {
     ...Typography.bodySmall,
@@ -783,6 +687,7 @@ const styles = StyleSheet.create({
   },
   padCard: {
     flex: 1,
+    minHeight: 340,
     backgroundColor: colors.card,
     borderColor: colors.border,
     borderWidth: 1,
@@ -801,14 +706,22 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginBottom: Spacing.lg,
   },
+  padSurface: {
+    flex: 1,
+    minHeight: 280,
+    borderRadius: Radius.xl,
+    backgroundColor: '#EEF2F7',
+    padding: 12,
+  },
   signaturePad: {
     flex: 1,
-    minHeight: 260,
+    minHeight: 256,
     borderRadius: Radius.xl,
     backgroundColor: '#FFFFFF',
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#E7E9EE',
+    borderColor: '#DCE3EC',
+    position: 'relative',
   },
   placeholderWrap: {
     ...StyleSheet.absoluteFillObject,
