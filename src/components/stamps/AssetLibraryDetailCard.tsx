@@ -8,6 +8,7 @@ import {
     View,
 } from 'react-native';
 
+import type { AssetLibraryComparisonPreview } from '../../modules/assets/asset-presentation';
 import {
     getPreferredAssetPreviewUri,
     type StoredAsset,
@@ -41,6 +42,7 @@ export function AssetLibraryDetailCard({
   note,
   pills,
   actionGroups,
+  comparePreview,
   busy,
 }: {
   title: string;
@@ -53,17 +55,49 @@ export function AssetLibraryDetailCard({
   note: string;
   pills: string[];
   actionGroups: AssetLibraryAction[][];
+  comparePreview?: AssetLibraryComparisonPreview | null;
   busy?: boolean;
 }) {
   return (
     <View style={styles.card}>
       <Text style={styles.title}>{title}</Text>
 
-      <Image
-        source={{ uri: getPreferredAssetPreviewUri(asset) }}
-        resizeMode="contain"
-        style={styles.preview}
-      />
+      {comparePreview ? (
+        <View style={styles.compareCard}>
+          <View style={styles.compareHeader}>
+            <Text style={styles.compareTitle}>Önce / Sonra</Text>
+            <Text style={styles.compareHelperText}>
+              {comparePreview.helperText}
+            </Text>
+          </View>
+
+          <View style={styles.compareRow}>
+            <View style={styles.compareColumn}>
+              <Text style={styles.compareLabel}>{comparePreview.beforeLabel}</Text>
+              <Image
+                source={{ uri: comparePreview.beforeUri }}
+                resizeMode="contain"
+                style={styles.comparePreview}
+              />
+            </View>
+
+            <View style={styles.compareColumn}>
+              <Text style={styles.compareLabel}>{comparePreview.afterLabel}</Text>
+              <Image
+                source={{ uri: comparePreview.afterUri }}
+                resizeMode="contain"
+                style={styles.comparePreview}
+              />
+            </View>
+          </View>
+        </View>
+      ) : (
+        <Image
+          source={{ uri: getPreferredAssetPreviewUri(asset) }}
+          resizeMode="contain"
+          style={styles.preview}
+        />
+      )}
 
       <View style={styles.infoPillRow}>
         {pills.map((pill) => (
@@ -157,6 +191,42 @@ const styles = StyleSheet.create({
     height: 180,
     borderRadius: Radius.lg,
     backgroundColor: colors.surfaceElevated,
+  },
+  compareCard: {
+    gap: Spacing.md,
+  },
+  compareHeader: {
+    gap: 4,
+  },
+  compareTitle: {
+    ...Typography.titleSmall,
+    color: colors.text,
+  },
+  compareHelperText: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
+  },
+  compareRow: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+  },
+  compareColumn: {
+    flex: 1,
+    gap: Spacing.xs,
+  },
+  compareLabel: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    fontWeight: '700',
+  },
+  comparePreview: {
+    width: '100%',
+    height: 176,
+    borderRadius: Radius.lg,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   infoPillRow: {
     flexDirection: 'row',
