@@ -1372,19 +1372,6 @@ export function PdfEditorScreen({ route, navigation }: Props) {
                     {formatOverlaySize(overlay)} • {formatOverlayOpacity(overlay.opacity)}
                   </Text>
 
-                  {isSignature && signature ? (
-                    <View style={styles.overlaySignatureInfoRow}>
-                      <View
-                        style={[
-                          styles.overlaySignatureColorDot,
-                          { backgroundColor: signature.color },
-                        ]}
-                      />
-                      <Text style={styles.overlaySignatureInfoText}>
-                        {signature.color}
-                      </Text>
-                    </View>
-                  ) : null}
                 </View>
 
                 <ToolbarButton
@@ -1722,23 +1709,5 @@ const styles = StyleSheet.create({
   overlayRowHint: {
     color: colors.muted,
     fontSize: 12,
-  },
-  overlaySignatureInfoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 4,
-  },
-  overlaySignatureColorDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  overlaySignatureInfoText: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
   },
 });
