@@ -12,7 +12,6 @@ import {
 } from 'react-native';
 
 import { BannerStrip } from '../../components/ads/BannerStrip';
-import { DocumentPipelineSummaryCard } from '../../components/documents/DocumentPipelineSummaryCard';
 import { LocalTrustBadge } from '../../components/trust/LocalTrustBadge';
 import { executeToolPrimaryAction } from '../../features/tools/tools.actions';
 import {
@@ -24,7 +23,6 @@ import { useAdGate } from '../../hooks/useAdGate';
 import { resolveBillingCapabilities } from '../../modules/billing/billing-capabilities';
 import {
   buildDocumentHomeOverview,
-  buildHomeDocumentPipelineSummary,
   resolveDocumentPageCount,
   resolveDocumentStatusLabel,
   resolveDocumentThumbnailPath,
@@ -97,12 +95,6 @@ const SECONDARY_ACTIONS: HomeActionConfig[] = [
     icon: 'document-text-outline',
   },
   {
-    toolKey: 'scan-translate',
-    title: 'Çeviri',
-    subtitle: 'Türkçeye çevir',
-    icon: 'language-outline',
-  },
-  {
     toolKey: 'edit-smart-erase',
     title: 'Akıllı Sil',
     subtitle: 'İzleri temizle',
@@ -119,6 +111,12 @@ const SECONDARY_ACTIONS: HomeActionConfig[] = [
     title: 'Excel',
     subtitle: 'XLS çıktısı',
     icon: 'grid-outline',
+  },
+  {
+    toolKey: 'utility-qr',
+    title: 'QR',
+    subtitle: 'Kod okut',
+    icon: 'qr-code-outline',
   },
   {
     toolKey: 'utility-tools-hub',
@@ -182,6 +180,36 @@ async function resolveDocuments(service: DocumentServiceShape) {
   }
 
   return [];
+}
+
+function InfoPill({
+  label,
+  tone = 'default',
+}: {
+  label: string;
+  tone?: 'default' | 'accent' | 'success' | 'warning';
+}) {
+  return (
+    <View
+      style={[
+        styles.infoPill,
+        tone === 'accent' && styles.infoPillAccent,
+        tone === 'success' && styles.infoPillSuccess,
+        tone === 'warning' && styles.infoPillWarning,
+      ]}
+    >
+      <Text
+        style={[
+          styles.infoPillText,
+          tone === 'accent' && styles.infoPillTextAccent,
+          tone === 'success' && styles.infoPillTextSuccess,
+          tone === 'warning' && styles.infoPillTextWarning,
+        ]}
+      >
+        {label}
+      </Text>
+    </View>
+  );
 }
 
 function PrimaryActionCard({
@@ -252,6 +280,34 @@ function SecondaryToolCard({
   );
 }
 
+function getContinueCopy(document: HomeDocument | null) {
+  if (!document) {
+    return {
+      eyebrow: 'Hızlı başlangıç',
+      title: 'İlk belgeni oluştur',
+      subtitle: 'Kamera ile tara, PDF içe aktar veya galeriden yeni belge başlat.',
+      body: 'İlk belgeyi oluşturduğunda düzenleme, OCR, kaşe ve export akışı tek yüzeyden devam eder.',
+      primaryLabel: 'Taramayı başlat',
+      secondaryLabel: 'Belgelerim',
+    };
+  }
+
+  const pageCount = resolveDocumentPageCount(document);
+  const status = resolveDocumentStatusLabel(document);
+
+  return {
+    eyebrow: 'Kaldığın yerden devam et',
+    title: resolveDocumentTitle(document),
+    subtitle: `${pageCount > 0 ? `${pageCount} sayfa` : 'Belge'} • ${formatDocumentDate(resolveDocumentUpdatedAt(document))}`,
+    body:
+      pageCount > 0
+        ? `${status} durumundaki belgeye dön, düzenleme, OCR, kaşe ve export akışına devam et.`
+        : 'Belge detayını aç, çıktı durumunu kontrol et ve sonraki adıma geç.',
+    primaryLabel: 'Devam et',
+    secondaryLabel: 'Kitaplık',
+  };
+}
+
 function ContinueDocumentCard({
   document,
   onPress,
@@ -261,17 +317,16 @@ function ContinueDocumentCard({
   onPress: () => void;
   onOpenLibrary: () => void;
 }) {
+  const copy = getContinueCopy(document);
+
   if (!document) {
     return (
       <View style={styles.continueCard}>
-        <View style={styles.continueHeaderRow}>
-          <View style={styles.continueHeaderTextWrap}>
-            <Text style={styles.continueEyebrow}>Hızlı başlangıç</Text>
-            <Text style={styles.continueTitle}>İlk belgeni oluştur</Text>
-            <Text style={styles.continueSubtitle}>
-              Kamera ile tara, PDF içe aktar veya galeriden yeni belge başlat.
-            </Text>
-          </View>
+        <View style={styles.continueHeaderTextWrap}>
+          <Text style={styles.continueEyebrow}>{copy.eyebrow}</Text>
+          <Text style={styles.continueTitle}>{copy.title}</Text>
+          <Text style={styles.continueSubtitle}>{copy.subtitle}</Text>
+          <Text style={styles.continueBody}>{copy.body}</Text>
         </View>
 
         <View style={styles.continueFooterRow}>
@@ -282,7 +337,7 @@ function ContinueDocumentCard({
               pressed && styles.pressed,
             ]}
           >
-            <Text style={styles.continuePrimaryButtonText}>Taramayı başlat</Text>
+            <Text style={styles.continuePrimaryButtonText}>{copy.primaryLabel}</Text>
           </Pressable>
 
           <Pressable
@@ -292,40 +347,32 @@ function ContinueDocumentCard({
               pressed && styles.pressed,
             ]}
           >
-            <Text style={styles.continueSecondaryButtonText}>Belgelerim</Text>
+            <Text style={styles.continueSecondaryButtonText}>{copy.secondaryLabel}</Text>
           </Pressable>
         </View>
       </View>
     );
   }
 
-  const title = resolveDocumentTitle(document);
-  const status = resolveDocumentStatusLabel(document);
-  const updatedAt = formatDocumentDate(resolveDocumentUpdatedAt(document));
-  const pageCount = resolveDocumentPageCount(document);
   const thumbnailPath = resolveDocumentThumbnailPath(document);
+  const pageCount = resolveDocumentPageCount(document);
+  const status = resolveDocumentStatusLabel(document);
 
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.continueCard,
-        pressed && styles.cardPressed,
-      ]}
-    >
+    <View style={styles.continueCard}>
       <View style={styles.continueHeaderRow}>
         <View style={styles.continueHeaderTextWrap}>
-          <Text style={styles.continueEyebrow}>Kaldığın yerden devam et</Text>
+          <Text style={styles.continueEyebrow}>{copy.eyebrow}</Text>
           <Text numberOfLines={1} style={styles.continueTitle}>
-            {title}
+            {copy.title}
           </Text>
           <Text numberOfLines={2} style={styles.continueSubtitle}>
-            {pageCount > 0 ? `${pageCount} sayfa` : 'Belge'} • {updatedAt}
+            {copy.subtitle}
           </Text>
         </View>
 
-        <View style={styles.continueStatusChip}>
-          <Text style={styles.continueStatusChipText}>{status}</Text>
+        <View style={styles.continueStatusWrap}>
+          <InfoPill label={status} tone="accent" />
         </View>
       </View>
 
@@ -349,15 +396,23 @@ function ContinueDocumentCard({
         </View>
 
         <View style={styles.continueSideColumn}>
-          <Text style={styles.continueSideTitle}>Son belge</Text>
-          <Text style={styles.continueSideText}>
-            Düzenleme, OCR, çeviri, kaşe ve export akışına tek dokunuşla dön.
-          </Text>
+          <View style={styles.continueMetaPillRow}>
+            <InfoPill label={`${pageCount} sayfa`} />
+            <InfoPill label="Local-first" tone="success" />
+          </View>
+
+          <Text style={styles.continueBody}>{copy.body}</Text>
 
           <View style={styles.continueFooterRow}>
-            <View style={styles.continuePrimaryButton}>
-              <Text style={styles.continuePrimaryButtonText}>Devam et</Text>
-            </View>
+            <Pressable
+              onPress={onPress}
+              style={({ pressed }) => [
+                styles.continuePrimaryButton,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={styles.continuePrimaryButtonText}>{copy.primaryLabel}</Text>
+            </Pressable>
 
             <Pressable
               onPress={onOpenLibrary}
@@ -366,12 +421,12 @@ function ContinueDocumentCard({
                 pressed && styles.pressed,
               ]}
             >
-              <Text style={styles.continueSecondaryButtonText}>Tümü</Text>
+              <Text style={styles.continueSecondaryButtonText}>{copy.secondaryLabel}</Text>
             </Pressable>
           </View>
         </View>
       </View>
-    </Pressable>
+    </View>
   );
 }
 
@@ -419,6 +474,83 @@ function RecentDocumentMiniCard({
         {status}
       </Text>
     </Pressable>
+  );
+}
+
+function HomePlanCard({
+  canSave,
+  canShare,
+  canRemoveAds,
+  onPress,
+}: {
+  canSave: boolean;
+  canShare: boolean;
+  canRemoveAds: boolean;
+  onPress: () => void;
+}) {
+  if (!canSave) {
+    return (
+      <View style={styles.premiumCard}>
+        <View style={styles.premiumHeaderRow}>
+          <View style={styles.premiumIconWrap}>
+            <Ionicons name="diamond-outline" size={20} color={colors.primary} />
+          </View>
+
+          <View style={styles.premiumTextWrap}>
+            <Text style={styles.premiumTitle}>Free plan aktif</Text>
+            <Text style={styles.premiumSubtitle}>
+              Tüm araçlar açık. Kaydetme, export, paylaşma ve reklamsız kullanım
+              premium ile açılır.
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.premiumFeatureRow}>
+          <InfoPill label="Araçlar açık" tone="success" />
+          <InfoPill label="Kaydetme kilitli" tone="warning" />
+          <InfoPill label="Reklamlı" tone="accent" />
+        </View>
+
+        <Pressable
+          onPress={onPress}
+          style={({ pressed }) => [
+            styles.premiumButton,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Text style={styles.premiumButtonText}>Premium’u gör</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.proCard}>
+      <View style={styles.proBadgeRow}>
+        <Ionicons name="checkmark-circle" size={18} color={colors.primary} />
+        <Text style={styles.proTitle}>Premium aktif</Text>
+      </View>
+
+      <Text style={styles.proSubtitle}>
+        Kaydetme, paylaşma ve dışa aktarma açık. Reklamlar kapalı.
+      </Text>
+
+      <View style={styles.premiumFeatureRow}>
+        <InfoPill label={canSave ? 'Export açık' : 'Export kapalı'} tone="success" />
+        <InfoPill label={canShare ? 'Paylaşma açık' : 'Paylaşma kapalı'} tone="success" />
+        <InfoPill label={canRemoveAds ? 'Reklamsız' : 'Reklamlı'} tone="success" />
+      </View>
+
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.proManageButton,
+          pressed && styles.pressed,
+        ]}
+      >
+        <Text style={styles.proManageButtonText}>Planı gör</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -536,13 +668,6 @@ export function HomeScreen({ navigation }: Props) {
     ? 'Belgeler hazırlanıyor'
     : `${overview.totalCount} belge`;
 
-  const summaryCard = useMemo(
-    () => buildHomeDocumentPipelineSummary(overview, {
-      onOpenDocuments: handleOpenDocuments,
-    }),
-    [handleOpenDocuments, overview],
-  );
-
   return (
     <View style={styles.container}>
       <ScrollView
@@ -553,22 +678,36 @@ export function HomeScreen({ navigation }: Props) {
           <View style={styles.heroTextWrap}>
             <Text style={styles.heroTitle}>PDF Kaşe</Text>
             <Text style={styles.heroSubtitle}>
-              Tara, düzenle, OCR yap, çevir ve sonucu local-first belge akışında cihazında yönet.
+              Tara, düzenle, OCR yap, çevir ve sonucu local-first belge akışında
+              cihazında yönet.
             </Text>
           </View>
 
-          <Pressable
-            onPress={handleOpenDocuments}
-            style={({ pressed }) => [
-              styles.heroLibraryButton,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Ionicons name="folder-open-outline" size={18} color={colors.text} />
-            <Text style={styles.heroLibraryButtonText}>Belgelerim</Text>
-          </Pressable>
+          <View style={styles.heroStatusRow}>
+            <InfoPill label={documentCountLabel} tone="accent" />
+            {overview.processingCount > 0 ? (
+              <InfoPill label={`${overview.processingCount} işleniyor`} tone="warning" />
+            ) : null}
+            <InfoPill
+              label={capabilities.canRemoveAds ? 'Reklamsız' : 'Free'}
+              tone={capabilities.canRemoveAds ? 'success' : 'default'}
+            />
+          </View>
 
-          <LocalTrustBadge compact />
+          <View style={styles.heroActionRow}>
+            <Pressable
+              onPress={handleOpenDocuments}
+              style={({ pressed }) => [
+                styles.heroLibraryButton,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Ionicons name="folder-open-outline" size={18} color={colors.text} />
+              <Text style={styles.heroLibraryButtonText}>Belgelerim</Text>
+            </Pressable>
+
+            <LocalTrustBadge compact />
+          </View>
         </View>
 
         {loading ? (
@@ -583,8 +722,6 @@ export function HomeScreen({ navigation }: Props) {
             onOpenLibrary={handleOpenDocuments}
           />
         )}
-
-        {!loading ? <DocumentPipelineSummaryCard {...summaryCard} /> : null}
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Hızlı giriş</Text>
@@ -667,42 +804,12 @@ export function HomeScreen({ navigation }: Props) {
           ))}
         </View>
 
-        {!capabilities.canSave ? (
-          <View style={styles.premiumCard}>
-            <View style={styles.premiumHeaderRow}>
-              <View style={styles.premiumIconWrap}>
-                <Ionicons name="diamond-outline" size={20} color={colors.primary} />
-              </View>
-
-              <View style={styles.premiumTextWrap}>
-                <Text style={styles.premiumTitle}>Free ve Premium farkı</Text>
-                <Text style={styles.premiumSubtitle}>
-                  Tüm araçlar açık. Kaydetme, export, paylaşma ve reklamsız kullanım premium ile açılır.
-                </Text>
-              </View>
-            </View>
-
-            <Pressable
-              onPress={() => navigation.navigate('Pricing')}
-              style={({ pressed }) => [
-                styles.premiumButton,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text style={styles.premiumButtonText}>Premium’u gör</Text>
-            </Pressable>
-          </View>
-        ) : (
-          <View style={styles.proCard}>
-            <View style={styles.proBadgeRow}>
-              <Ionicons name="checkmark-circle" size={18} color={colors.primary} />
-              <Text style={styles.proTitle}>Premium aktif</Text>
-            </View>
-            <Text style={styles.proSubtitle}>
-              Kaydetme, paylaşma ve dışa aktarma açık. Reklamlar kapalı.
-            </Text>
-          </View>
-        )}
+        <HomePlanCard
+          canSave={capabilities.canSave}
+          canShare={capabilities.canShare}
+          canRemoveAds={capabilities.canRemoveAds}
+          onPress={() => navigation.navigate('Pricing')}
+        />
       </ScrollView>
 
       <BannerStrip hidden={capabilities.canRemoveAds} />
@@ -736,6 +843,17 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     lineHeight: 22,
   },
+  heroStatusRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+  },
+  heroActionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
   heroLibraryButton: {
     alignSelf: 'flex-start',
     minHeight: 42,
@@ -752,6 +870,42 @@ const styles = StyleSheet.create({
   heroLibraryButtonText: {
     color: colors.text,
     fontWeight: '700',
+  },
+  infoPill: {
+    minHeight: 30,
+    borderRadius: Radius.full,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+  },
+  infoPillAccent: {
+    borderColor: 'rgba(59, 130, 246, 0.28)',
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+  },
+  infoPillSuccess: {
+    borderColor: 'rgba(53, 199, 111, 0.28)',
+    backgroundColor: 'rgba(53, 199, 111, 0.12)',
+  },
+  infoPillWarning: {
+    borderColor: 'rgba(245, 158, 11, 0.24)',
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+  },
+  infoPillText: {
+    ...Typography.caption,
+    color: colors.textSecondary,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  infoPillTextAccent: {
+    color: '#60A5FA',
+  },
+  infoPillTextSuccess: {
+    color: colors.primary,
+  },
+  infoPillTextWarning: {
+    color: '#FBBF24',
   },
   continueCard: {
     borderRadius: Radius.xl,
@@ -786,18 +940,13 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     lineHeight: 22,
   },
-  continueStatusChip: {
-    borderRadius: 999,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 6,
-    backgroundColor: colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  continueStatusChipText: {
-    ...Typography.caption,
+  continueBody: {
+    ...Typography.bodySmall,
     color: colors.textSecondary,
-    fontWeight: '800',
+    lineHeight: 20,
+  },
+  continueStatusWrap: {
+    alignItems: 'flex-end',
   },
   continuePreviewRow: {
     flexDirection: 'row',
@@ -827,14 +976,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: Spacing.md,
   },
-  continueSideTitle: {
-    ...Typography.titleSmall,
-    color: colors.text,
-  },
-  continueSideText: {
-    ...Typography.bodySmall,
-    color: colors.textSecondary,
-    lineHeight: 20,
+  continueMetaPillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
   },
   continueFooterRow: {
     flexDirection: 'row',
@@ -1027,6 +1172,11 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     lineHeight: 16,
   },
+  premiumFeatureRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+  },
   premiumCard: {
     borderRadius: Radius.xl,
     borderWidth: 1,
@@ -1097,6 +1247,22 @@ const styles = StyleSheet.create({
     ...Typography.bodySmall,
     color: colors.textSecondary,
     lineHeight: 20,
+  },
+  proManageButton: {
+    minHeight: 44,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.lg,
+    marginTop: Spacing.xs,
+  },
+  proManageButtonText: {
+    color: colors.text,
+    fontWeight: '800',
+    fontSize: 14,
   },
   loadingCard: {
     borderRadius: Radius.xl,
