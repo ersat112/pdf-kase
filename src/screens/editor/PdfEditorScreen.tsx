@@ -1998,6 +1998,11 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
+    colorSwatchInner: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+  },
   overlaySelectionBadge: {
     position: 'absolute',
     left: 6,
