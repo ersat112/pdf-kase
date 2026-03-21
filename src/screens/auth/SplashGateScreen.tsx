@@ -17,6 +17,19 @@ export function SplashGateScreen() {
         <Text style={styles.subtitle}>
           Oturum, premium durumu ve yerel veriler hazırlanıyor...
         </Text>
+
+        <View style={styles.pillRow}>
+          <View style={styles.pill}>
+            <Text style={styles.pillText}>Local-first</Text>
+          </View>
+          <View style={styles.pill}>
+            <Text style={styles.pillText}>Mock auth / billing</Text>
+          </View>
+        </View>
+
+        <Text style={styles.helperText}>
+          Kapalı testte oturum ve premium doğrulaması cihaz içi mock katmanla çalışır.
+        </Text>
       </View>
     </View>
   );
@@ -68,5 +81,34 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     textAlign: 'center',
     maxWidth: 280,
+  },
+  pillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 6,
+  },
+  pill: {
+    minHeight: 28,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  pillText: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  helperText: {
+    color: colors.textTertiary,
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
+    maxWidth: 300,
   },
 });
