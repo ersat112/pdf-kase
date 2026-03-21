@@ -76,7 +76,10 @@
           "imageWidth": 160
         }
       ],
-      "react-native-pdf-jsi"
+      "react-native-pdf-jsi",
+      "expo-secure-store",
+      "expo-sharing",
+      "expo-sqlite"
     ]
   }
 }
