@@ -18,8 +18,11 @@ import {
 import { AssetLibraryItemCard } from '../../components/stamps/AssetLibraryItemCard';
 import {
   formatAssetLibraryDate,
+  getAssetLibraryComparisonPreview,
   getAssetLibraryHeroCopy,
+  getAssetLibraryOperationFeedback,
   getAssetLibrarySelectionPills,
+  type AssetLibraryOperationFeedback,
 } from '../../modules/assets/asset-presentation';
 import {
   createAssetFromImage,
@@ -106,6 +109,8 @@ export function StampManagerScreen() {
   const [renameValue, setRenameValue] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [operationFeedback, setOperationFeedback] =
+    useState<AssetLibraryOperationFeedback | null>(null);
 
   const heroCopy = useMemo(
     () => getAssetLibraryHeroCopy(activeType, nativeCleanupAvailable),
@@ -152,6 +157,10 @@ export function StampManagerScreen() {
   useEffect(() => {
     setRenameValue(selectedAsset?.name ?? '');
   }, [selectedAsset?.id, selectedAsset?.name]);
+
+  useEffect(() => {
+    setOperationFeedback(null);
+  }, [activeType]);
 
   useEffect(() => {
     let active = true;
@@ -234,10 +243,13 @@ export function StampManagerScreen() {
 
         await loadAssets();
         setSelectedAssetId(created.id);
-
-        if (prepared.metadata.cleanupWarning) {
-          Alert.alert('Bilgi', prepared.metadata.cleanupWarning);
-        }
+        setOperationFeedback(
+          getAssetLibraryOperationFeedback({
+            type: 'stamp',
+            operation: 'import',
+            metadata: prepared.metadata,
+          }),
+        );
       } finally {
         await removeFilesIfExist([prepared.processedUri, prepared.previewUri]);
       }
@@ -268,12 +280,18 @@ export function StampManagerScreen() {
       setBusy(true);
       await renameAsset(selectedAsset.id, nextName);
       await loadAssets();
+      setOperationFeedback(
+        getAssetLibraryOperationFeedback({
+          type: activeType,
+          operation: 'rename',
+        }),
+      );
     } catch (error) {
       Alert.alert('Hata', getErrorMessage(error, 'Ad güncellenemedi.'));
     } finally {
       setBusy(false);
     }
-  }, [loadAssets, renameValue, selectedAsset]);
+  }, [activeType, loadAssets, renameValue, selectedAsset]);
 
   const handleOptimizeSelected = useCallback(async () => {
     if (!selectedAsset || activeType !== 'stamp') {
@@ -298,6 +316,13 @@ export function StampManagerScreen() {
         });
 
         await loadAssets();
+        setOperationFeedback(
+          getAssetLibraryOperationFeedback({
+            type: 'stamp',
+            operation: 'optimize',
+            metadata: prepared.metadata,
+          }),
+        );
       } finally {
         await removeFilesIfExist([prepared.processedUri, prepared.previewUri]);
       }
@@ -334,22 +359,14 @@ export function StampManagerScreen() {
         });
 
         await loadAssets();
-
-        if (prepared.metadata.backgroundRemoved) {
-          Alert.alert('Tamamlandı', 'Arka plan temizlenerek güncellendi.');
-        } else if (prepared.metadata.cleanupWarning) {
-          Alert.alert('Bilgi', prepared.metadata.cleanupWarning);
-        } else if (!nativeCleanupAvailable) {
-          Alert.alert(
-            'Native cleanup hazır değil',
-            'Bridge katmanı kurulu değil veya mevcut build içinde native cleanup modülü yok.',
-          );
-        } else {
-          Alert.alert(
-            'Temizleme uygulanmadı',
-            'Bu kaşede uygulanabilir bir arka plan temizleme çıktısı üretilmedi.',
-          );
-        }
+        setOperationFeedback(
+          getAssetLibraryOperationFeedback({
+            type: 'stamp',
+            operation: 'cleanup',
+            metadata: prepared.metadata,
+            nativeCleanupAvailable,
+          }),
+        );
       } finally {
         await removeFilesIfExist([prepared.processedUri, prepared.previewUri]);
       }
@@ -388,10 +405,13 @@ export function StampManagerScreen() {
         });
 
         await loadAssets();
-
-        if (prepared.metadata.cleanupWarning) {
-          Alert.alert('Bilgi', prepared.metadata.cleanupWarning);
-        }
+        setOperationFeedback(
+          getAssetLibraryOperationFeedback({
+            type: 'stamp',
+            operation: 'replace',
+            metadata: prepared.metadata,
+          }),
+        );
       } finally {
         await removeFilesIfExist([prepared.processedUri, prepared.previewUri]);
       }
@@ -411,6 +431,12 @@ export function StampManagerScreen() {
       setBusy(true);
       await restoreAssetOriginal(selectedAsset.id);
       await loadAssets();
+      setOperationFeedback(
+        getAssetLibraryOperationFeedback({
+          type: 'stamp',
+          operation: 'restore',
+        }),
+      );
     } catch (error) {
       Alert.alert('Hata', getErrorMessage(error, 'Orijinal geri yüklenemedi.'));
     } finally {
@@ -441,6 +467,12 @@ export function StampManagerScreen() {
               setBusy(true);
               await deleteAsset(selectedAsset.id);
               await loadAssets();
+              setOperationFeedback(
+                getAssetLibraryOperationFeedback({
+                  type: activeType,
+                  operation: 'delete',
+                }),
+              );
             } catch (error) {
               Alert.alert(
                 'Hata',
@@ -494,6 +526,16 @@ export function StampManagerScreen() {
       selectedAssetMetadata,
       selectedAssetUsageCount,
     ],
+  );
+
+  const comparisonPreview = useMemo(
+    () =>
+      getAssetLibraryComparisonPreview({
+        type: activeType,
+        asset: selectedAsset,
+        metadata: selectedAssetMetadata,
+      }),
+    [activeType, selectedAsset, selectedAssetMetadata],
   );
 
   const detailActionGroups = useMemo<AssetLibraryAction[][]>(() => {
@@ -616,6 +658,22 @@ export function StampManagerScreen() {
         <Text style={styles.summaryValue}>{assets.length}</Text>
       </View>
 
+      {operationFeedback ? (
+        <View
+          style={[
+            styles.feedbackCard,
+            operationFeedback.tone === 'success'
+              ? styles.feedbackCardSuccess
+              : operationFeedback.tone === 'warning'
+                ? styles.feedbackCardWarning
+                : styles.feedbackCardNeutral,
+          ]}
+        >
+          <Text style={styles.feedbackTitle}>{operationFeedback.title}</Text>
+          <Text style={styles.feedbackText}>{operationFeedback.message}</Text>
+        </View>
+      ) : null}
+
       {loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={colors.primary} />
@@ -636,7 +694,10 @@ export function StampManagerScreen() {
                 selected={asset.id === selectedAssetId}
                 busy={busy}
                 subtitle={formatAssetLibraryDate(asset.created_at)}
-                onPress={() => setSelectedAssetId(asset.id)}
+                onPress={() => {
+                  setOperationFeedback(null);
+                  setSelectedAssetId(asset.id);
+                }}
               />
             ))}
           </View>
@@ -653,6 +714,7 @@ export function StampManagerScreen() {
               note={heroCopy.note}
               pills={selectionPills}
               actionGroups={detailActionGroups}
+              comparePreview={comparisonPreview}
               busy={busy}
             />
           ) : null}
@@ -770,6 +832,35 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 24,
     fontWeight: '800',
+  },
+  feedbackCard: {
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    padding: Spacing.lg,
+    marginBottom: Spacing.lg,
+    gap: 6,
+  },
+  feedbackCardSuccess: {
+    backgroundColor: 'rgba(22, 101, 52, 0.14)',
+    borderColor: 'rgba(34, 197, 94, 0.28)',
+  },
+  feedbackCardWarning: {
+    backgroundColor: 'rgba(180, 83, 9, 0.14)',
+    borderColor: 'rgba(245, 158, 11, 0.28)',
+  },
+  feedbackCardNeutral: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+  },
+  feedbackTitle: {
+    ...Typography.bodySmall,
+    color: colors.text,
+    fontWeight: '800',
+  },
+  feedbackText: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
   },
   loadingContainer: {
     alignItems: 'center',
