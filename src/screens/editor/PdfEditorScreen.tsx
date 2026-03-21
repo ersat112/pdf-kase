@@ -534,25 +534,35 @@ export function PdfEditorScreen({ route, navigation }: Props) {
     return applySnapToFrame(activeOverlayFrame).guides;
   }, [activeOverlayFrame, previewFrame.height, previewFrame.width]);
 
-  const reloadCurrentPageOverlays = useCallback(async () => {
-    if (!currentPage) {
-      setOverlays([]);
-      setSelectedOverlayId(null);
-      setOverlayDraft(null);
-      return;
-    }
-
-    const pageOverlays = await getPageOverlays(currentPage.id);
-    setOverlays(pageOverlays);
-    setSelectedOverlayId((current) => {
-      if (current && pageOverlays.some((overlay) => overlay.id === current)) {
-        return current;
+  const reloadCurrentPageOverlays = useCallback(
+    async (preferredSelectedOverlayId?: number | null) => {
+      if (!currentPage) {
+        setOverlays([]);
+        setSelectedOverlayId(null);
+        setOverlayDraft(null);
+        return;
       }
 
-      return pageOverlays[0]?.id ?? null;
-    });
-    setOverlayDraft(null);
-  }, [currentPage]);
+      const pageOverlays = await getPageOverlays(currentPage.id);
+      setOverlays(pageOverlays);
+      setSelectedOverlayId((current) => {
+        if (
+          preferredSelectedOverlayId &&
+          pageOverlays.some((overlay) => overlay.id === preferredSelectedOverlayId)
+        ) {
+          return preferredSelectedOverlayId;
+        }
+
+        if (current && pageOverlays.some((overlay) => overlay.id === current)) {
+          return current;
+        }
+
+        return pageOverlays[0]?.id ?? null;
+      });
+      setOverlayDraft(null);
+    },
+    [currentPage],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -1204,6 +1214,67 @@ export function PdfEditorScreen({ route, navigation }: Props) {
     [reloadCurrentPageOverlays, selectedOverlay],
   );
 
+  const handleDuplicateSelectedOverlay = useCallback(async () => {
+    if (!selectedOverlay || !currentPage) {
+      Alert.alert('Öğe seç', 'Önce çoğaltmak istediğin kaşe veya imzayı seç.');
+      return;
+    }
+
+    const assetId = getOverlayAssetId(selectedOverlay);
+
+    if (!assetId) {
+      Alert.alert('Öğe çoğaltılamadı', 'Seçili overlay için asset bilgisi bulunamadı.');
+      return;
+    }
+
+    const snapped = applySnapToFrame({
+      x: Math.min(selectedOverlay.x + 0.03, 1 - selectedOverlay.width),
+      y: Math.min(selectedOverlay.y + 0.03, 1 - selectedOverlay.height),
+      width: selectedOverlay.width,
+      height: selectedOverlay.height,
+    });
+
+    try {
+      setBusy(true);
+
+      let nextOverlayId: number;
+
+      if (selectedOverlay.type === 'signature') {
+        nextOverlayId = await addSignatureAssetOverlay({
+          documentId,
+          pageId: currentPage.id,
+          assetId,
+          x: snapped.frame.x,
+          y: snapped.frame.y,
+          width: snapped.frame.width,
+          height: snapped.frame.height,
+          rotation: selectedOverlay.rotation,
+          opacity: selectedOverlay.opacity,
+          strokeColor: normalizeHexColor(getOverlaySignatureColor(selectedOverlay)),
+        });
+      } else {
+        nextOverlayId = await addStampOverlay({
+          documentId,
+          pageId: currentPage.id,
+          assetId,
+          x: snapped.frame.x,
+          y: snapped.frame.y,
+          width: snapped.frame.width,
+          height: snapped.frame.height,
+          rotation: selectedOverlay.rotation,
+          opacity: selectedOverlay.opacity,
+        });
+      }
+
+      await reloadCurrentPageOverlays(nextOverlayId);
+    } catch (error) {
+      Alert.alert('Hata', getErrorMessage(error, 'Seçili öğe çoğaltılamadı.'));
+    } finally {
+      setBusy(false);
+    }
+  }, [currentPage, documentId, reloadCurrentPageOverlays, selectedOverlay]);
+
+
   const updateSelectedSignatureColorValue = useCallback(
     async (nextColor: string) => {
       const normalizedColor = normalizeHexColor(nextColor);
@@ -1544,6 +1615,16 @@ export function PdfEditorScreen({ route, navigation }: Props) {
             />
           </View>
 
+          <View style={styles.adjustRow}>
+            <ToolbarButton
+              title="Seçili öğeyi çoğalt"
+              onPress={() => {
+                void handleDuplicateSelectedOverlay();
+              }}
+              disabled={busy}
+            />
+          </View>
+
           {selectedOverlay.type === 'signature' ? (
             <Text style={styles.readySignatureHint}>
               İmza asset olarak yerleşir. Konum, preset boyut ve opaklık tek model üzerinden yönetilir.
@@ -1775,12 +1856,23 @@ export function PdfEditorScreen({ route, navigation }: Props) {
                   ) : null}
                 </View>
 
-                <ToolbarButton
-                  title="Sil"
-                  onPress={() => handleDeleteOverlay(overlay.id)}
-                  disabled={busy}
-                  danger
-                />
+                <View style={styles.overlayRowActions}>
+                  {isSelected ? (
+                    <ToolbarButton
+                      title="Çoğalt"
+                      onPress={() => {
+                        void handleDuplicateSelectedOverlay();
+                      }}
+                      disabled={busy}
+                    />
+                  ) : null}
+                  <ToolbarButton
+                    title="Sil"
+                    onPress={() => handleDeleteOverlay(overlay.id)}
+                    disabled={busy}
+                    danger
+                  />
+                </View>
               </Pressable>
             );
           })
@@ -1897,6 +1989,11 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     transform: [{ scale: 1.04 }],
   },
+  colorSwatchInner: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+  },
   sizeCard: {
     backgroundColor: colors.card,
     borderColor: colors.border,
@@ -1997,11 +2094,6 @@ const styles = StyleSheet.create({
   overlayImage: {
     width: '100%',
     height: '100%',
-  },
-    colorSwatchInner: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
   },
   overlaySelectionBadge: {
     position: 'absolute',
@@ -2168,6 +2260,13 @@ const styles = StyleSheet.create({
   overlayMeta: {
     flex: 1,
     gap: 2,
+  },
+  overlayRowActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
   },
   overlayRowText: {
     color: colors.text,
