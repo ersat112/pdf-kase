@@ -37,9 +37,7 @@ import {
   getOverlayAssetId,
   getPageOverlays,
   updateOverlayTransform,
-  updateSignatureOverlayStyle,
   type DocumentOverlay,
-  type SignatureStroke,
 } from '../../modules/overlays/overlay.service';
 import { removeFilesIfExist } from '../../modules/storage/file.service';
 import type { RootStackParamList } from '../../navigation/types';
@@ -95,16 +93,6 @@ type ResizeSession = {
   opacity: number;
 };
 
-type SignaturePoint = {
-  x: number;
-  y: number;
-};
-
-type SignaturePresentation = {
-  strokes: SignatureStroke[];
-  color: string;
-};
-
 type OverlayPreviewItem =
   | {
       kind: 'stamp';
@@ -114,15 +102,7 @@ type OverlayPreviewItem =
       isSelected: boolean;
     }
   | {
-      kind: 'signature-strokes';
-      overlay: DocumentOverlay;
-      strokes: SignatureStroke[];
-      color: string;
-      style: ViewStyle;
-      isSelected: boolean;
-    }
-  | {
-      kind: 'signature-asset';
+      kind: 'signature';
       overlay: DocumentOverlay;
       asset: StoredAsset;
       style: ViewStyle;
@@ -143,22 +123,6 @@ const OVERLAY_MIN_HEIGHT = 0.04;
 const OVERLAY_MAX_HEIGHT = 0.7;
 const DEFAULT_SIGNATURE_COLOR = '#111111';
 
-const SIGNATURE_COLOR_PALETTE = [
-  '#111111',
-  '#1F2937',
-  '#374151',
-  '#4B5563',
-  '#1F4B99',
-  '#2563EB',
-  '#0F766E',
-  '#0D9488',
-  '#7C3AED',
-  '#9333EA',
-  '#B45309',
-  '#D97706',
-  '#B91C1C',
-  '#DC2626',
-];
 
 function ToolbarButton({
   title,
@@ -194,33 +158,6 @@ function ToolbarButton({
       >
         {title}
       </Text>
-    </Pressable>
-  );
-}
-
-function SignatureColorSwatch({
-  color,
-  selected,
-  onPress,
-  disabled,
-}: {
-  color: string;
-  selected: boolean;
-  onPress: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <Pressable
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.colorSwatchOuter,
-        selected && styles.colorSwatchOuterSelected,
-        disabled && styles.toolbarButtonDisabled,
-        pressed && !disabled && styles.pressed,
-      ]}
-    >
-      <View style={[styles.colorSwatchInner, { backgroundColor: color }]} />
     </Pressable>
   );
 }
@@ -340,121 +277,6 @@ function normalizeHexColor(value: unknown) {
   return DEFAULT_SIGNATURE_COLOR;
 }
 
-function getOverlaySignaturePresentation(
-  overlay: Pick<DocumentOverlay, 'content'>,
-): SignaturePresentation {
-  if (!overlay.content) {
-    return {
-      strokes: [],
-      color: DEFAULT_SIGNATURE_COLOR,
-    };
-  }
-
-  try {
-    const parsed = JSON.parse(overlay.content) as {
-      strokes?: Array<Array<{ x?: number; y?: number }>>;
-      color?: string;
-      strokeColor?: string;
-    };
-
-    const strokes = Array.isArray(parsed?.strokes)
-      ? parsed.strokes
-          .map((stroke) =>
-            Array.isArray(stroke)
-              ? stroke
-                  .map((point) => ({
-                    x:
-                      typeof point?.x === 'number' && Number.isFinite(point.x)
-                        ? clamp01(point.x)
-                        : 0,
-                    y:
-                      typeof point?.y === 'number' && Number.isFinite(point.y)
-                        ? clamp01(point.y)
-                        : 0,
-                  }))
-                  .filter(
-                    (point) =>
-                      Number.isFinite(point.x) && Number.isFinite(point.y),
-                  )
-              : [],
-          )
-          .filter((stroke) => stroke.length >= 2)
-      : [];
-
-    return {
-      strokes,
-      color: normalizeHexColor(parsed?.strokeColor ?? parsed?.color),
-    };
-  } catch {
-    return {
-      strokes: [],
-      color: DEFAULT_SIGNATURE_COLOR,
-    };
-  }
-}
-
-function segmentStyle(
-  from: SignaturePoint,
-  to: SignaturePoint,
-  width: number,
-  height: number,
-  color: string,
-): ViewStyle {
-  const x1 = from.x * width;
-  const y1 = from.y * height;
-  const x2 = to.x * width;
-  const y2 = to.y * height;
-
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const length = Math.max(1, Math.sqrt(dx * dx + dy * dy));
-  const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
-
-  return {
-    position: 'absolute',
-    left: x1,
-    top: y1,
-    width: length,
-    height: 2.6,
-    borderRadius: 999,
-    backgroundColor: color,
-    transform: [{ translateY: -1.3 }, { rotate: `${angle}deg` }],
-    transformOrigin: 'left center',
-  };
-}
-
-function SignaturePreview({
-  strokes,
-  color,
-  selected,
-}: {
-  strokes: SignatureStroke[];
-  color: string;
-  selected?: boolean;
-}) {
-  return (
-    <View
-      style={[
-        styles.signatureOverlayBox,
-        selected && styles.signatureOverlayBoxSelected,
-      ]}
-    >
-      {strokes.flatMap((stroke, strokeIndex) =>
-        stroke.slice(1).map((point, pointIndex) => {
-          const previous = stroke[pointIndex];
-
-          return (
-            <View
-              key={`${strokeIndex}-${pointIndex}`}
-              style={segmentStyle(previous, point, 1, 1, color)}
-            />
-          );
-        }),
-      )}
-    </View>
-  );
-}
-
 function getAssetLabel(type: AssetType) {
   return type === 'stamp' ? 'Kaşe' : 'İmza';
 }
@@ -505,14 +327,6 @@ export function PdfEditorScreen({ route, navigation }: Props) {
     () => overlays.find((overlay) => overlay.id === selectedOverlayId) ?? null,
     [overlays, selectedOverlayId],
   );
-
-  const selectedSignatureInfo = useMemo(() => {
-    if (!selectedOverlay || selectedOverlay.type !== 'signature') {
-      return null;
-    }
-
-    return getOverlaySignaturePresentation(selectedOverlay);
-  }, [selectedOverlay]);
 
   const previewFrame = useMemo(
     () => fitContain(previewSize, pageImageSize),
@@ -1131,40 +945,6 @@ export function PdfEditorScreen({ route, navigation }: Props) {
     [reloadCurrentPageOverlays, selectedOverlay],
   );
 
-  const handleUpdateSelectedSignatureColor = useCallback(
-    async (strokeColor: string) => {
-      if (!selectedOverlay || selectedOverlay.type !== 'signature') {
-        Alert.alert('İmza seç', 'Önce renk değiştirmek istediğin imzayı seç.');
-        return;
-      }
-
-      if (!selectedSignatureInfo || selectedSignatureInfo.strokes.length === 0) {
-        Alert.alert(
-          'Hazır imza',
-          'Kütüphaneden eklenen hazır imzalarda renk değiştirme desteklenmiyor.',
-        );
-        return;
-      }
-
-      try {
-        setBusy(true);
-
-        await updateSignatureOverlayStyle({
-          overlayId: selectedOverlay.id,
-          strokeColor,
-          opacity: selectedOverlay.opacity,
-        });
-
-        await reloadCurrentPageOverlays();
-      } catch (error) {
-        Alert.alert('Hata', getErrorMessage(error, 'İmza rengi güncellenemedi.'));
-      } finally {
-        setBusy(false);
-      }
-    },
-    [reloadCurrentPageOverlays, selectedOverlay, selectedSignatureInfo],
-  );
-
   const overlayPreviewItems = useMemo<OverlayPreviewItem[]>(() => {
     return overlays
       .map((overlay) => {
@@ -1191,19 +971,6 @@ export function PdfEditorScreen({ route, navigation }: Props) {
         };
 
         if (overlay.type === 'signature') {
-          const signature = getOverlaySignaturePresentation(overlay);
-
-          if (signature.strokes.length > 0) {
-            return {
-              kind: 'signature-strokes',
-              overlay,
-              strokes: signature.strokes,
-              color: signature.color,
-              style,
-              isSelected: overlay.id === selectedOverlayId,
-            };
-          }
-
           const assetId = getOverlayAssetId(overlay);
           const asset = allAssets.find(
             (item) => item.id === assetId && item.type === 'signature',
@@ -1214,7 +981,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
           }
 
           return {
-            kind: 'signature-asset',
+            kind: 'signature',
             overlay,
             asset,
             style,
@@ -1400,46 +1167,15 @@ export function PdfEditorScreen({ route, navigation }: Props) {
             {formatOverlaySize(selectedOverlay)} • {formatOverlayOpacity(selectedOverlay.opacity)}
           </Text>
 
-          {selectedOverlay.type === 'signature' &&
-          selectedSignatureInfo &&
-          selectedSignatureInfo.strokes.length > 0 ? (
-            <>
-              <View style={styles.signatureMetaRow}>
-                <Text style={styles.signatureMetaLabel}>İmza rengi</Text>
-                <View
-                  style={[
-                    styles.signatureColorPreview,
-                    { backgroundColor: selectedSignatureInfo.color },
-                  ]}
-                />
-                <Text style={styles.signatureMetaValue}>{selectedSignatureInfo.color}</Text>
-              </View>
-
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.colorPaletteRow}
-              >
-                {SIGNATURE_COLOR_PALETTE.map((color) => (
-                  <SignatureColorSwatch
-                    key={color}
-                    color={color}
-                    selected={selectedSignatureInfo.color === color}
-                    onPress={() => {
-                      void handleUpdateSelectedSignatureColor(color);
-                    }}
-                    disabled={busy}
-                  />
-                ))}
-              </ScrollView>
-            </>
+          {selectedOverlay.type === 'signature' ? (
+            <Text style={styles.readySignatureHint}>
+              İmza asset olarak yerleşir. Konum, boyut ve opaklık düzenlenebilir.
+            </Text>
           ) : null}
 
-          {selectedOverlay.type === 'signature' &&
-          selectedSignatureInfo &&
-          selectedSignatureInfo.strokes.length === 0 ? (
+          {selectedOverlay.type === 'signature' ? (
             <Text style={styles.readySignatureHint}>
-              Hazır imza seçili. Konum, boyut ve opaklık düzenlenebilir.
+              İmza asset olarak yerleşir. Konum, boyut ve opaklık düzenlenebilir.
             </Text>
           ) : null}
 
@@ -1512,19 +1248,11 @@ export function PdfEditorScreen({ route, navigation }: Props) {
                 item.isSelected && styles.overlayContentBoxSelected,
               ]}
             >
-              {item.kind === 'signature-strokes' ? (
-                <SignaturePreview
-                  strokes={item.strokes}
-                  color={item.color}
-                  selected={item.isSelected}
-                />
-              ) : (
-                <Image
-                  source={{ uri: getPreferredAssetPreviewUri(item.asset) }}
-                  resizeMode="contain"
-                  style={styles.overlayImage}
-                />
-              )}
+              <Image
+                source={{ uri: getPreferredAssetPreviewUri(item.asset) }}
+                resizeMode="contain"
+                style={styles.overlayImage}
+              />
             </View>
 
             {item.isSelected ? (
@@ -1618,9 +1346,6 @@ export function PdfEditorScreen({ route, navigation }: Props) {
             const asset = allAssets.find((item) => item.id === assetId);
             const isSelected = selectedOverlayId === overlay.id;
             const isSignature = overlay.type === 'signature';
-            const signature = isSignature
-              ? getOverlaySignaturePresentation(overlay)
-              : null;
 
             return (
               <Pressable
@@ -1639,9 +1364,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
                   </Text>
                   <Text style={styles.overlayRowHint}>
                     {isSignature
-                      ? signature && signature.strokes.length > 0
-                        ? `Serbest imza • ${formatOverlayPosition(overlay)}`
-                        : `${asset?.name ?? 'Hazır imza'} • ${formatOverlayPosition(overlay)}`
+                      ? `${asset?.name ?? 'İmza asseti'} • ${formatOverlayPosition(overlay)}`
                       : `${asset?.name ?? 'Bilinmeyen kaşe'} • ${formatOverlayPosition(overlay)}`}
                   </Text>
 
@@ -1766,20 +1489,6 @@ const styles = StyleSheet.create({
   toolbarButtonTextDanger: {
     color: '#FCA5A5',
   },
-  colorSwatchOuter: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  colorSwatchOuterSelected: {
-    borderColor: colors.primary,
-    borderWidth: 2,
-  },
   colorSwatchInner: {
     width: 22,
     height: 22,
@@ -1828,31 +1537,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
     flexWrap: 'wrap',
-  },
-  signatureMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  signatureMetaLabel: {
-    ...Typography.bodySmall,
-    color: colors.textSecondary,
-  },
-  signatureMetaValue: {
-    ...Typography.bodySmall,
-    color: colors.text,
-    fontWeight: '700',
-  },
-  signatureColorPreview: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  colorPaletteRow: {
-    gap: 10,
-    paddingRight: 16,
   },
   readySignatureHint: {
     ...Typography.bodySmall,
