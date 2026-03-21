@@ -1,16 +1,19 @@
 // src/screens/auth/LoginScreen.tsx
+import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useMemo, useState } from 'react';
 import {
-    Alert,
-    Pressable,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 
 import { Screen } from '../../components/common/Screen';
+import { appRuntime } from '../../config/runtime';
 import type { RootStackParamList } from '../../navigation/types';
 import { useAuthStore } from '../../store/useAuthStore';
 import { Radius, Shadows, Spacing, Typography, colors } from '../../theme';
@@ -37,6 +40,8 @@ type FieldProps = {
     | 'username'
     | 'name'
     | 'one-time-code';
+  rightActionLabel?: string;
+  onRightActionPress?: () => void;
 };
 
 function Field({
@@ -48,23 +53,38 @@ function Field({
   autoCapitalize = 'none',
   keyboardType = 'default',
   autoComplete,
+  rightActionLabel,
+  onRightActionPress,
 }: FieldProps) {
   return (
     <View style={styles.field}>
-      <Text style={styles.label}>{label}</Text>
+      <View style={styles.fieldHeaderRow}>
+        <Text style={styles.label}>{label}</Text>
 
-      <TextInput
-        value={value}
-        onChangeText={onChangeText}
-        secureTextEntry={secureTextEntry}
-        autoCapitalize={autoCapitalize}
-        keyboardType={keyboardType}
-        autoComplete={autoComplete}
-        autoCorrect={false}
-        placeholder={placeholder}
-        placeholderTextColor={colors.textTertiary}
-        style={styles.input}
-      />
+        {rightActionLabel && onRightActionPress ? (
+          <Pressable
+            onPress={onRightActionPress}
+            style={({ pressed }) => pressed && styles.pressed}
+          >
+            <Text style={styles.fieldActionText}>{rightActionLabel}</Text>
+          </Pressable>
+        ) : null}
+      </View>
+
+      <View style={styles.inputWrap}>
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          secureTextEntry={secureTextEntry}
+          autoCapitalize={autoCapitalize}
+          keyboardType={keyboardType}
+          autoComplete={autoComplete}
+          autoCorrect={false}
+          placeholder={placeholder}
+          placeholderTextColor={colors.textTertiary}
+          style={styles.input}
+        />
+      </View>
     </View>
   );
 }
@@ -72,10 +92,11 @@ function Field({
 type SocialButtonProps = {
   label: string;
   hint: string;
+  icon: React.ComponentProps<typeof Ionicons>['name'];
   onPress: () => void;
 };
 
-function SocialButton({ label, hint, onPress }: SocialButtonProps) {
+function SocialButton({ label, hint, icon, onPress }: SocialButtonProps) {
   return (
     <Pressable
       onPress={onPress}
@@ -84,13 +105,49 @@ function SocialButton({ label, hint, onPress }: SocialButtonProps) {
         pressed && styles.pressed,
       ]}
     >
+      <View style={styles.socialIconWrap}>
+        <Ionicons name={icon} size={18} color={colors.primary} />
+      </View>
+
       <View style={styles.socialContent}>
         <Text style={styles.socialLabel}>{label}</Text>
         <Text style={styles.socialHint}>{hint}</Text>
       </View>
 
-      <Text style={styles.socialArrow}>›</Text>
+      <Ionicons
+        name="chevron-forward"
+        size={18}
+        color={colors.textTertiary}
+      />
     </Pressable>
+  );
+}
+
+function InfoPill({
+  label,
+  tone = 'default',
+}: {
+  label: string;
+  tone?: 'default' | 'accent' | 'success';
+}) {
+  return (
+    <View
+      style={[
+        styles.infoPill,
+        tone === 'accent' && styles.infoPillAccent,
+        tone === 'success' && styles.infoPillSuccess,
+      ]}
+    >
+      <Text
+        style={[
+          styles.infoPillText,
+          tone === 'accent' && styles.infoPillTextAccent,
+          tone === 'success' && styles.infoPillTextSuccess,
+        ]}
+      >
+        {label}
+      </Text>
+    </View>
   );
 }
 
@@ -100,14 +157,25 @@ function isValidEmail(value: string) {
 
 export function LoginScreen({ navigation }: Props) {
   const login = useAuthStore((state) => state.login);
+  const usesPreviewAuth = appRuntime.authProvider === 'preview_local';
+  const buildLabel =
+    appRuntime.stage === 'preview' ? 'Onizleme build' : 'Production build';
+  const defaultEmail = usesPreviewAuth ? 'demo@pdfkase.com' : '';
+  const defaultPassword = usesPreviewAuth ? '123456' : '';
 
-  const [email, setEmail] = useState('demo@pdfkase.com');
-  const [password, setPassword] = useState('123456');
+  const [email, setEmail] = useState(defaultEmail);
+  const [password, setPassword] = useState(defaultPassword);
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const isFormValid = useMemo(() => {
     return isValidEmail(email) && password.trim().length >= 6;
   }, [email, password]);
+
+  const handleUseDemoAccount = () => {
+    setEmail('demo@pdfkase.com');
+    setPassword('123456');
+  };
 
   const handleLogin = async () => {
     if (!isValidEmail(email)) {
@@ -138,8 +206,8 @@ export function LoginScreen({ navigation }: Props) {
 
   const handleSocialPress = (providerLabel: string) => {
     Alert.alert(
-      'Hazır UI',
-      `${providerLabel} akışı için arayüz hazır. Gerçek provider bağlantısı sonraki sprintte bağlanacak.`,
+      'Hazır arayüz',
+      `${providerLabel} giriş yüzeyi hazır. Gerçek sağlayıcı bağlantısı sonraki auth sprintinde bağlanacak.`,
     );
   };
 
@@ -152,31 +220,75 @@ export function LoginScreen({ navigation }: Props) {
       <View style={styles.container}>
         <View style={styles.heroCard}>
           <Text style={styles.heroEyebrow}>PDF KAŞE</Text>
-          <Text style={styles.heroTitle}>Hızlı giriş seçenekleri</Text>
+          <Text style={styles.heroTitle}>Belgelerine hızlı ve güvenli dön</Text>
           <Text style={styles.heroSubtitle}>
-            Apple, Google, GitHub ve klasik e-posta oturumu için modern giriş akışı.
+            Tarama, düzenleme, kaşe ve export akışların cihazında kalır.
+            {usesPreviewAuth
+              ? ' Onizleme oturumu ile hizli giris yapabiliriz.'
+              : ' Hesabinla guvenli sekilde devam et.'}
           </Text>
+
+          <View style={styles.heroPillRow}>
+            <InfoPill label="Local-first" tone="success" />
+            <InfoPill
+              label={usesPreviewAuth ? 'Onizleme auth' : 'Auth hazir'}
+              tone="accent"
+            />
+            <InfoPill label={buildLabel} />
+          </View>
         </View>
+
+        {usesPreviewAuth ? (
+          <View style={styles.quickAccessCard}>
+            <View style={styles.quickAccessTextWrap}>
+              <Text style={styles.quickAccessTitle}>Onizleme hesap hazir</Text>
+              <Text style={styles.quickAccessText}>
+                Hizli giris icin hazir oturum bilgilerini tek dokunusla doldur.
+              </Text>
+            </View>
+
+            <View style={styles.demoCredentialCard}>
+              <Text style={styles.demoCredentialLabel}>E-posta</Text>
+              <Text style={styles.demoCredentialValue}>demo@pdfkase.com</Text>
+              <Text style={styles.demoCredentialLabel}>Şifre</Text>
+              <Text style={styles.demoCredentialValue}>123456</Text>
+            </View>
+
+            <Pressable
+              onPress={handleUseDemoAccount}
+              style={({ pressed }) => [
+                styles.secondaryButton,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={styles.secondaryButtonText}>Onizleme hesabi doldur</Text>
+            </Pressable>
+          </View>
+        ) : null}
 
         <View style={styles.socialSection}>
           <SocialButton
             label="Apple ile devam et"
-            hint="iOS oturum akışı için hazır"
+            hint="iOS oturum akışı için hazır yüzey"
+            icon="logo-apple"
             onPress={() => handleSocialPress('Apple')}
           />
           <SocialButton
             label="Google ile devam et"
-            hint="Google oturum akışı için hazır"
+            hint="Google oturum akışı için hazır yüzey"
+            icon="logo-google"
             onPress={() => handleSocialPress('Google')}
           />
           <SocialButton
             label="GitHub ile devam et"
             hint="Developer odaklı giriş akışı"
+            icon="logo-github"
             onPress={() => handleSocialPress('GitHub')}
           />
           <SocialButton
             label="Daha fazla seçenek"
-            hint="Kurumsal / e-posta doğrulamalı akış"
+            hint="Kurumsal ve doğrulamalı sağlayıcılar"
+            icon="apps-outline"
             onPress={() => handleSocialPress('Ek sağlayıcı')}
           />
         </View>
@@ -202,16 +314,23 @@ export function LoginScreen({ navigation }: Props) {
             value={password}
             onChangeText={setPassword}
             placeholder="Şifreni gir"
-            secureTextEntry
+            secureTextEntry={!passwordVisible}
             autoComplete="password"
+            rightActionLabel={passwordVisible ? 'Gizle' : 'Göster'}
+            onRightActionPress={() => setPasswordVisible((current) => !current)}
           />
 
           <View style={styles.helperRow}>
-            <Text style={styles.helperText}>Demo hesap hazır: demo@pdfkase.com</Text>
+            <Text style={styles.helperText}>
+              {usesPreviewAuth
+                ? 'Onizleme hesapla hizli test yapabilir veya kayit ekranindan yeni bir hesap olusturabilirsin.'
+                : 'E-posta ile giris yapabilir veya kayit ekranindan yeni hesap olusturabilirsin.'}
+            </Text>
+
             <Pressable
               onPress={() =>
                 Alert.alert(
-                  'Hazır UI',
+                  'Hazır arayüz',
                   'Şifre sıfırlama ekranı sonraki auth sprintinde bağlanacak.',
                 )
               }
@@ -230,14 +349,22 @@ export function LoginScreen({ navigation }: Props) {
               pressed && !submitting && isFormValid && styles.pressed,
             ]}
           >
-            <Text style={styles.primaryButtonText}>
-              {submitting ? 'Giriş yapılıyor...' : 'Giriş yap'}
-            </Text>
+            {submitting ? (
+              <View style={styles.primaryButtonContent}>
+                <ActivityIndicator size="small" color={colors.onPrimary} />
+                <Text style={styles.primaryButtonText}>Giriş yapılıyor...</Text>
+              </View>
+            ) : (
+              <Text style={styles.primaryButtonText}>Giriş yap</Text>
+            )}
           </Pressable>
 
           <Pressable
             onPress={() => navigation.navigate('Register')}
-            style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
+            style={({ pressed }) => [
+              styles.secondaryButton,
+              pressed && styles.pressed,
+            ]}
           >
             <Text style={styles.secondaryButtonText}>Yeni hesap oluştur</Text>
           </Pressable>
@@ -277,6 +404,83 @@ const styles = StyleSheet.create({
   heroSubtitle: {
     ...Typography.body,
     color: colors.textSecondary,
+    lineHeight: 22,
+  },
+  heroPillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+    marginTop: Spacing.xs,
+  },
+  infoPill: {
+    minHeight: 30,
+    borderRadius: Radius.full,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+  },
+  infoPillAccent: {
+    borderColor: 'rgba(59, 130, 246, 0.28)',
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+  },
+  infoPillSuccess: {
+    borderColor: 'rgba(53, 199, 111, 0.28)',
+    backgroundColor: 'rgba(53, 199, 111, 0.12)',
+  },
+  infoPillText: {
+    ...Typography.caption,
+    color: colors.textSecondary,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  infoPillTextAccent: {
+    color: '#60A5FA',
+  },
+  infoPillTextSuccess: {
+    color: colors.primary,
+  },
+  quickAccessCard: {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: Radius.xl,
+    padding: Spacing.xl,
+    gap: Spacing.md,
+    ...Shadows.sm,
+  },
+  quickAccessTextWrap: {
+    gap: 4,
+  },
+  quickAccessTitle: {
+    ...Typography.titleLarge,
+    color: colors.text,
+  },
+  quickAccessText: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
+  },
+  demoCredentialCard: {
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+    padding: Spacing.md,
+    gap: 4,
+  },
+  demoCredentialLabel: {
+    ...Typography.caption,
+    color: colors.textTertiary,
+    textTransform: 'uppercase',
+    fontWeight: '800',
+  },
+  demoCredentialValue: {
+    ...Typography.body,
+    color: colors.text,
+    fontWeight: '700',
+    marginBottom: 4,
   },
   socialSection: {
     gap: Spacing.sm,
@@ -290,8 +494,18 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: Spacing.md,
     ...Shadows.sm,
+  },
+  socialIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   socialContent: {
     flex: 1,
@@ -304,12 +518,6 @@ const styles = StyleSheet.create({
   socialHint: {
     ...Typography.bodySmall,
     color: colors.textSecondary,
-  },
-  socialArrow: {
-    color: colors.textTertiary,
-    fontSize: 24,
-    fontWeight: '700',
-    marginLeft: Spacing.md,
   },
   dividerRow: {
     flexDirection: 'row',
@@ -337,16 +545,31 @@ const styles = StyleSheet.create({
   field: {
     gap: Spacing.sm,
   },
+  fieldHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.md,
+  },
   label: {
     ...Typography.labelLarge,
     color: colors.text,
   },
-  input: {
+  fieldActionText: {
+    ...Typography.bodySmall,
+    color: colors.primary,
+    fontWeight: '700',
+  },
+  inputWrap: {
     minHeight: 54,
     backgroundColor: colors.surfaceElevated,
     borderColor: colors.border,
     borderWidth: 1,
     borderRadius: Radius.lg,
+    justifyContent: 'center',
+  },
+  input: {
+    minHeight: 54,
     paddingHorizontal: Spacing.md,
     color: colors.text,
     ...Typography.body,
@@ -361,6 +584,7 @@ const styles = StyleSheet.create({
     flex: 1,
     ...Typography.bodySmall,
     color: colors.textTertiary,
+    lineHeight: 18,
   },
   helperLink: {
     ...Typography.bodySmall,
@@ -378,6 +602,11 @@ const styles = StyleSheet.create({
   primaryButtonDisabled: {
     backgroundColor: colors.primaryMuted,
     opacity: 0.65,
+  },
+  primaryButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   primaryButtonText: {
     color: colors.onPrimary,

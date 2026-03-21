@@ -4,6 +4,8 @@ import {
 } from '@react-navigation/native-stack';
 import React, { useEffect, useRef } from 'react';
 
+import { appRuntime } from '../config/runtime';
+import { useWorkspaceSyncLifecycle } from '../hooks/useWorkspaceSyncLifecycle';
 import { LoginScreen } from '../screens/auth/LoginScreen';
 import { RegisterScreen } from '../screens/auth/RegisterScreen';
 import { SplashGateScreen } from '../screens/auth/SplashGateScreen';
@@ -41,10 +43,14 @@ const sharedScreenOptions: NativeStackNavigationOptions = {
 };
 
 export function RootNavigator() {
+  const authStatus = useAuthStore((state) => state.status);
   const hydrateAuth = useAuthStore((state) => state.hydrate);
+  const billingHydrated = useBillingStore((state) => state.hydrated);
   const hydrateBilling = useBillingStore((state) => state.hydrate);
 
   const hydrationStartedRef = useRef(false);
+
+  useWorkspaceSyncLifecycle();
 
   useEffect(() => {
     if (hydrationStartedRef.current) {
@@ -62,85 +68,99 @@ export function RootNavigator() {
     })();
   }, [hydrateAuth, hydrateBilling]);
 
+  const appReady = authStatus !== 'booting' && billingHydrated;
+  const canAccessApplication =
+    authStatus === 'authenticated' || !appRuntime.requireAuthentication;
+
   return (
-    <Stack.Navigator initialRouteName="Home" screenOptions={sharedScreenOptions}>
-      <Stack.Screen
-        name="Home"
-        component={AppTabs}
-        options={{
-          headerShown: false,
-        }}
-      />
-      <Stack.Screen
-        name="ScanEntry"
-        component={ScanEntryScreen}
-        options={{
-          headerShown: false,
-          presentation: 'fullScreenModal',
-          animation: 'fade_from_bottom',
-        }}
-      />
-      <Stack.Screen
-        name="Documents"
-        component={DocumentsScreen}
-        options={{ title: 'Dosyalar' }}
-      />
-      <Stack.Screen
-        name="DocumentDetail"
-        component={DocumentDetailScreen}
-        options={{ title: 'Belge Detayı' }}
-      />
-      <Stack.Screen
-        name="PdfEditor"
-        component={PdfEditorScreen}
-        options={{ title: 'PDF Editör' }}
-      />
-      <Stack.Screen
-        name="SignaturePad"
-        component={SignaturePadScreen}
-        options={{ title: 'İmza' }}
-      />
-      <Stack.Screen
-        name="SmartErase"
-        component={SmartEraseScreen}
-        options={{ title: 'Akıllı Silme' }}
-      />
-      <Stack.Screen
-        name="StampManager"
-        component={StampManagerScreen}
-        options={{ title: 'Kaşe Yönetimi' }}
-      />
-      <Stack.Screen
-        name="Pricing"
-        component={PricingScreen}
-        options={{ title: 'Premium' }}
-      />
-      <Stack.Screen
-        name="Settings"
-        component={SettingsScreen}
-        options={{ title: 'Ayarlar' }}
-      />
-      <Stack.Screen
-        name="Login"
-        component={LoginScreen}
-        options={{
-          title: 'Giriş Yap',
-          animation: 'fade',
-        }}
-      />
-      <Stack.Screen
-        name="Register"
-        component={RegisterScreen}
-        options={{ title: 'Kayıt Ol' }}
-      />
-      <Stack.Screen
-        name="SplashGate"
-        component={SplashGateScreen}
-        options={{
-          headerShown: false,
-          animation: 'fade',
-        }}
-      />
+    <Stack.Navigator screenOptions={sharedScreenOptions}>
+      {!appReady ? (
+        <Stack.Group navigationKey="boot">
+          <Stack.Screen
+            name="SplashGate"
+            component={SplashGateScreen}
+            options={{
+              headerShown: false,
+              animation: 'fade',
+            }}
+          />
+        </Stack.Group>
+      ) : canAccessApplication ? (
+        <Stack.Group navigationKey="app">
+          <Stack.Screen
+            name="Home"
+            component={AppTabs}
+            options={{
+              headerShown: false,
+            }}
+          />
+          <Stack.Screen
+            name="ScanEntry"
+            component={ScanEntryScreen}
+            options={{
+              headerShown: false,
+              presentation: 'fullScreenModal',
+              animation: 'fade_from_bottom',
+            }}
+          />
+          <Stack.Screen
+            name="Documents"
+            component={DocumentsScreen}
+            options={{ title: 'Dosyalar' }}
+          />
+          <Stack.Screen
+            name="DocumentDetail"
+            component={DocumentDetailScreen}
+            options={{ title: 'Belge Detayı' }}
+          />
+          <Stack.Screen
+            name="PdfEditor"
+            component={PdfEditorScreen}
+            options={{ title: 'PDF Editör' }}
+          />
+          <Stack.Screen
+            name="SignaturePad"
+            component={SignaturePadScreen}
+            options={{ title: 'İmza' }}
+          />
+          <Stack.Screen
+            name="SmartErase"
+            component={SmartEraseScreen}
+            options={{ title: 'Akıllı Silme' }}
+          />
+          <Stack.Screen
+            name="StampManager"
+            component={StampManagerScreen}
+            options={{ title: 'Kaşe Yönetimi' }}
+          />
+          <Stack.Screen
+            name="Pricing"
+            component={PricingScreen}
+            options={{ title: 'Premium' }}
+          />
+          <Stack.Screen
+            name="Settings"
+            component={SettingsScreen}
+            options={{ title: 'Ayarlar' }}
+          />
+        </Stack.Group>
+      ) : (
+        <Stack.Group navigationKey="auth">
+          <Stack.Screen
+            name="Login"
+            component={LoginScreen}
+            options={{
+              title: 'Giriş Yap',
+              animation: 'fade',
+            }}
+          />
+          <Stack.Screen
+            name="Register"
+            component={RegisterScreen}
+            options={{ title: 'Kayıt Ol' }}
+          />
+        </Stack.Group>
+      )}
     </Stack.Navigator>
   );
 }

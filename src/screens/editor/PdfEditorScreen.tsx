@@ -7,7 +7,6 @@ import {
   Alert,
   Image,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -18,6 +17,20 @@ import {
 
 import { Screen } from '../../components/common/Screen';
 import {
+  EditorAssetTray,
+} from '../../components/editor/EditorAssetTray';
+import {
+  EditorInspectorPanel,
+} from '../../components/editor/EditorInspectorPanel';
+import {
+  EditorPageStrip,
+  type EditorPageStripItem,
+} from '../../components/editor/EditorPageStrip';
+import {
+  EditorToolTabBar,
+  type EditorToolTabKey,
+} from '../../components/editor/EditorToolTabBar';
+import {
   createAssetFromImage,
   getAssetsByType,
   getPreferredAssetPreviewUri,
@@ -26,6 +39,10 @@ import {
   type StoredAsset,
 } from '../../modules/assets/asset.service';
 import {
+  documentActionLabels,
+  documentEditorCopy,
+} from '../../modules/documents/document-action-copy';
+import {
   getDocumentDetail,
   type DocumentDetail,
 } from '../../modules/documents/document.service';
@@ -33,17 +50,24 @@ import { prepareStampAssetImage } from '../../modules/imaging/imaging.service';
 import {
   addSignatureAssetOverlay,
   addStampOverlay,
+  applyOverlayToAllPages,
   deleteOverlay,
   getOverlayAssetId,
+  getOverlaySignatureColor,
   getPageOverlays,
   updateOverlayTransform,
   updateSignatureOverlayStyle,
   type DocumentOverlay,
-  type SignatureStroke,
 } from '../../modules/overlays/overlay.service';
 import { removeFilesIfExist } from '../../modules/storage/file.service';
 import type { RootStackParamList } from '../../navigation/types';
-import { Radius, Typography, colors } from '../../theme';
+import {
+  Radius,
+  Shadows,
+  Spacing,
+  Typography,
+  colors,
+} from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'PdfEditor'>;
 
@@ -95,16 +119,6 @@ type ResizeSession = {
   opacity: number;
 };
 
-type SignaturePoint = {
-  x: number;
-  y: number;
-};
-
-type SignaturePresentation = {
-  strokes: SignatureStroke[];
-  color: string;
-};
-
 type OverlayPreviewItem =
   | {
       kind: 'stamp';
@@ -114,20 +128,18 @@ type OverlayPreviewItem =
       isSelected: boolean;
     }
   | {
-      kind: 'signature-strokes';
-      overlay: DocumentOverlay;
-      strokes: SignatureStroke[];
-      color: string;
-      style: ViewStyle;
-      isSelected: boolean;
-    }
-  | {
-      kind: 'signature-asset';
+      kind: 'signature';
       overlay: DocumentOverlay;
       asset: StoredAsset;
       style: ViewStyle;
       isSelected: boolean;
     };
+
+type SnapGuides = {
+  vertical: number[];
+  horizontal: number[];
+  labels: string[];
+};
 
 const DEFAULT_STAMP_WIDTH_BY_PRESET: Record<StampSizePreset, number> = {
   small: 0.18,
@@ -141,26 +153,20 @@ const OVERLAY_MIN_WIDTH = 0.08;
 const OVERLAY_MAX_WIDTH = 0.7;
 const OVERLAY_MIN_HEIGHT = 0.04;
 const OVERLAY_MAX_HEIGHT = 0.7;
+const OVERLAY_SNAP_THRESHOLD = 0.025;
 const DEFAULT_SIGNATURE_COLOR = '#111111';
-
-const SIGNATURE_COLOR_PALETTE = [
+const SIGNATURE_OVERLAY_COLORS = [
   '#111111',
-  '#1F2937',
   '#374151',
-  '#4B5563',
-  '#1F4B99',
   '#2563EB',
   '#0F766E',
-  '#0D9488',
   '#7C3AED',
-  '#9333EA',
-  '#B45309',
   '#D97706',
-  '#B91C1C',
   '#DC2626',
-];
+  '#15803D',
+] as const;
 
-function ToolbarButton({
+function SmallActionButton({
   title,
   onPress,
   disabled,
@@ -178,49 +184,22 @@ function ToolbarButton({
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
-        styles.toolbarButton,
-        active && styles.toolbarButtonActive,
-        danger && styles.toolbarButtonDanger,
-        disabled && styles.toolbarButtonDisabled,
+        styles.smallActionButton,
+        active && styles.smallActionButtonActive,
+        danger && styles.smallActionButtonDanger,
+        disabled && styles.actionDisabled,
         pressed && !disabled && styles.pressed,
       ]}
     >
       <Text
         style={[
-          styles.toolbarButtonText,
-          active && styles.toolbarButtonTextActive,
-          danger && styles.toolbarButtonTextDanger,
+          styles.smallActionButtonText,
+          active && styles.smallActionButtonTextActive,
+          danger && styles.smallActionButtonTextDanger,
         ]}
       >
         {title}
       </Text>
-    </Pressable>
-  );
-}
-
-function SignatureColorSwatch({
-  color,
-  selected,
-  onPress,
-  disabled,
-}: {
-  color: string;
-  selected: boolean;
-  onPress: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <Pressable
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.colorSwatchOuter,
-        selected && styles.colorSwatchOuterSelected,
-        disabled && styles.toolbarButtonDisabled,
-        pressed && !disabled && styles.pressed,
-      ]}
-    >
-      <View style={[styles.colorSwatchInner, { backgroundColor: color }]} />
     </Pressable>
   );
 }
@@ -340,123 +319,112 @@ function normalizeHexColor(value: unknown) {
   return DEFAULT_SIGNATURE_COLOR;
 }
 
-function getOverlaySignaturePresentation(
-  overlay: Pick<DocumentOverlay, 'content'>,
-): SignaturePresentation {
-  if (!overlay.content) {
-    return {
-      strokes: [],
-      color: DEFAULT_SIGNATURE_COLOR,
-    };
-  }
-
-  try {
-    const parsed = JSON.parse(overlay.content) as {
-      strokes?: Array<Array<{ x?: number; y?: number }>>;
-      color?: string;
-      strokeColor?: string;
-    };
-
-    const strokes = Array.isArray(parsed?.strokes)
-      ? parsed.strokes
-          .map((stroke) =>
-            Array.isArray(stroke)
-              ? stroke
-                  .map((point) => ({
-                    x:
-                      typeof point?.x === 'number' && Number.isFinite(point.x)
-                        ? clamp01(point.x)
-                        : 0,
-                    y:
-                      typeof point?.y === 'number' && Number.isFinite(point.y)
-                        ? clamp01(point.y)
-                        : 0,
-                  }))
-                  .filter(
-                    (point) =>
-                      Number.isFinite(point.x) && Number.isFinite(point.y),
-                  )
-              : [],
-          )
-          .filter((stroke) => stroke.length >= 2)
-      : [];
-
-    return {
-      strokes,
-      color: normalizeHexColor(parsed?.strokeColor ?? parsed?.color),
-    };
-  } catch {
-    return {
-      strokes: [],
-      color: DEFAULT_SIGNATURE_COLOR,
-    };
-  }
+function getAssetLabel(type: AssetType) {
+  return type === 'stamp' ? 'Kaşe' : 'İmza';
 }
 
-function segmentStyle(
-  from: SignaturePoint,
-  to: SignaturePoint,
-  width: number,
-  height: number,
-  color: string,
-): ViewStyle {
-  const x1 = from.x * width;
-  const y1 = from.y * height;
-  const x2 = to.x * width;
-  const y2 = to.y * height;
-
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const length = Math.max(1, Math.sqrt(dx * dx + dy * dy));
-  const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
-
+function getSnapTargets(width: number, height: number) {
   return {
-    position: 'absolute',
-    left: x1,
-    top: y1,
-    width: length,
-    height: 2.6,
-    borderRadius: 999,
-    backgroundColor: color,
-    transform: [{ translateY: -1.3 }, { rotate: `${angle}deg` }],
-    transformOrigin: 'left center',
+    horizontal: [
+      { edge: 'left' as const, position: 0, x: 0 },
+      { edge: 'center-x' as const, position: width / 2, x: 0.5 - width / 2 },
+      { edge: 'right' as const, position: 1, x: 1 - width },
+    ],
+    vertical: [
+      { edge: 'top' as const, position: 0, y: 0 },
+      { edge: 'center-y' as const, position: height / 2, y: 0.5 - height / 2 },
+      { edge: 'bottom' as const, position: 1, y: 1 - height },
+    ],
   };
 }
 
-function SignaturePreview({
-  strokes,
-  color,
-  selected,
-}: {
-  strokes: SignatureStroke[];
-  color: string;
-  selected?: boolean;
+function applySnapToFrame(frame: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }) {
-  return (
-    <View
-      style={[
-        styles.signatureOverlayBox,
-        selected && styles.signatureOverlayBoxSelected,
-      ]}
-    >
-      {strokes.flatMap((stroke, strokeIndex) =>
-        stroke.slice(1).map((point, pointIndex) => {
-          const previous = stroke[pointIndex];
+  const clamped = clampOverlayFrame(frame);
+  const targets = getSnapTargets(clamped.width, clamped.height);
+  const guides: SnapGuides = {
+    vertical: [],
+    horizontal: [],
+    labels: [],
+  };
 
-          return (
-            <View
-              key={`${strokeIndex}-${pointIndex}`}
-              style={segmentStyle(previous, point, 1, 1, color)}
-            />
-          );
-        }),
-      )}
-    </View>
-  );
-}
+  let nextX = clamped.x;
+  let nextY = clamped.y;
 
-function getAssetLabel(type: AssetType) {
-  return type === 'stamp' ? 'Kaşe' : 'İmza';
+  const currentLeft = clamped.x;
+  const currentCenterX = clamped.x + clamped.width / 2;
+  const currentRight = clamped.x + clamped.width;
+
+  const currentTop = clamped.y;
+  const currentCenterY = clamped.y + clamped.height / 2;
+  const currentBottom = clamped.y + clamped.height;
+
+  const horizontalMatches = [
+    {
+      distance: Math.abs(currentLeft - targets.horizontal[0].position),
+      apply: targets.horizontal[0].x,
+      guide: 0,
+      label: 'Sola hizalandı',
+    },
+    {
+      distance: Math.abs(currentCenterX - targets.horizontal[1].position),
+      apply: targets.horizontal[1].x,
+      guide: 0.5,
+      label: 'Yatay merkeze hizalandı',
+    },
+    {
+      distance: Math.abs(currentRight - targets.horizontal[2].position),
+      apply: targets.horizontal[2].x,
+      guide: 1,
+      label: 'Sağa hizalandı',
+    },
+  ].sort((a, b) => a.distance - b.distance);
+
+  if (horizontalMatches[0] && horizontalMatches[0].distance <= OVERLAY_SNAP_THRESHOLD) {
+    nextX = horizontalMatches[0].apply;
+    guides.vertical.push(horizontalMatches[0].guide);
+    guides.labels.push(horizontalMatches[0].label);
+  }
+
+  const verticalMatches = [
+    {
+      distance: Math.abs(currentTop - targets.vertical[0].position),
+      apply: targets.vertical[0].y,
+      guide: 0,
+      label: 'Üste hizalandı',
+    },
+    {
+      distance: Math.abs(currentCenterY - targets.vertical[1].position),
+      apply: targets.vertical[1].y,
+      guide: 0.5,
+      label: 'Dikey merkeze hizalandı',
+    },
+    {
+      distance: Math.abs(currentBottom - targets.vertical[2].position),
+      apply: targets.vertical[2].y,
+      guide: 1,
+      label: 'Alta hizalandı',
+    },
+  ].sort((a, b) => a.distance - b.distance);
+
+  if (verticalMatches[0] && verticalMatches[0].distance <= OVERLAY_SNAP_THRESHOLD) {
+    nextY = verticalMatches[0].apply;
+    guides.horizontal.push(verticalMatches[0].guide);
+    guides.labels.push(verticalMatches[0].label);
+  }
+
+  return {
+    frame: {
+      ...clamped,
+      x: nextX,
+      y: nextY,
+    },
+    guides,
+  };
 }
 
 export function PdfEditorScreen({ route, navigation }: Props) {
@@ -471,6 +439,9 @@ export function PdfEditorScreen({ route, navigation }: Props) {
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [selectedOverlayId, setSelectedOverlayId] = useState<number | null>(null);
   const [stampSizePreset, setStampSizePreset] = useState<StampSizePreset>('medium');
+  const [signaturePlacementColor, setSignaturePlacementColor] = useState(
+    DEFAULT_SIGNATURE_COLOR,
+  );
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [previewSize, setPreviewSize] = useState<Size>({ width: 0, height: 0 });
@@ -480,6 +451,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
     height: 0,
   });
   const [overlayDraft, setOverlayDraft] = useState<OverlayDraft | null>(null);
+  const [activeTab, setActiveTab] = useState<EditorToolTabKey>('insert');
 
   const dragSessionRef = useRef<DragSession | null>(null);
   const resizeSessionRef = useRef<ResizeSession | null>(null);
@@ -506,38 +478,89 @@ export function PdfEditorScreen({ route, navigation }: Props) {
     [overlays, selectedOverlayId],
   );
 
-  const selectedSignatureInfo = useMemo(() => {
+  const selectedOverlaySignatureColor = useMemo(() => {
     if (!selectedOverlay || selectedOverlay.type !== 'signature') {
+      return DEFAULT_SIGNATURE_COLOR;
+    }
+
+    return normalizeHexColor(getOverlaySignatureColor(selectedOverlay));
+  }, [selectedOverlay]);
+
+  const selectedOverlayAsset = useMemo(() => {
+    if (!selectedOverlay) {
       return null;
     }
 
-    return getOverlaySignaturePresentation(selectedOverlay);
-  }, [selectedOverlay]);
+    const assetId = getOverlayAssetId(selectedOverlay);
+    return allAssets.find((asset) => asset.id === assetId) ?? null;
+  }, [allAssets, selectedOverlay]);
 
   const previewFrame = useMemo(
     () => fitContain(previewSize, pageImageSize),
     [pageImageSize, previewSize],
   );
 
-  const reloadCurrentPageOverlays = useCallback(async () => {
-    if (!currentPage) {
-      setOverlays([]);
-      setSelectedOverlayId(null);
-      setOverlayDraft(null);
-      return;
+  const activeOverlayFrame = useMemo(() => {
+    if (!selectedOverlay) {
+      return null;
     }
 
-    const pageOverlays = await getPageOverlays(currentPage.id);
-    setOverlays(pageOverlays);
-    setSelectedOverlayId((current) => {
-      if (current && pageOverlays.some((overlay) => overlay.id === current)) {
-        return current;
+    const draft =
+      overlayDraft && overlayDraft.overlayId === selectedOverlay.id
+        ? overlayDraft
+        : selectedOverlay;
+
+    return {
+      x: draft.x,
+      y: draft.y,
+      width: draft.width,
+      height: draft.height,
+      rotation: draft.rotation,
+      opacity: draft.opacity,
+    };
+  }, [overlayDraft, selectedOverlay]);
+
+  const snapGuides = useMemo(() => {
+    if (!activeOverlayFrame || previewFrame.width <= 0 || previewFrame.height <= 0) {
+      return {
+        vertical: [] as number[],
+        horizontal: [] as number[],
+        labels: [] as string[],
+      };
+    }
+
+    return applySnapToFrame(activeOverlayFrame).guides;
+  }, [activeOverlayFrame, previewFrame.height, previewFrame.width]);
+
+  const reloadCurrentPageOverlays = useCallback(
+    async (preferredSelectedOverlayId?: number | null) => {
+      if (!currentPage) {
+        setOverlays([]);
+        setSelectedOverlayId(null);
+        setOverlayDraft(null);
+        return;
       }
 
-      return pageOverlays[0]?.id ?? null;
-    });
-    setOverlayDraft(null);
-  }, [currentPage]);
+      const pageOverlays = await getPageOverlays(currentPage.id);
+      setOverlays(pageOverlays);
+      setSelectedOverlayId((current) => {
+        if (
+          preferredSelectedOverlayId &&
+          pageOverlays.some((overlay) => overlay.id === preferredSelectedOverlayId)
+        ) {
+          return preferredSelectedOverlayId;
+        }
+
+        if (current && pageOverlays.some((overlay) => overlay.id === current)) {
+          return current;
+        }
+
+        return pageOverlays[0]?.id ?? null;
+      });
+      setOverlayDraft(null);
+    },
+    [currentPage],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -583,6 +606,25 @@ export function PdfEditorScreen({ route, navigation }: Props) {
       };
     }, [documentId]),
   );
+
+  useEffect(() => {
+    if (selectedOverlay) {
+      setActiveTab('format');
+    }
+  }, [selectedOverlay?.id]);
+
+  useEffect(() => {
+    if (selectedOverlay?.type === 'signature') {
+      setSignaturePlacementColor(selectedOverlaySignatureColor);
+      return;
+    }
+
+    if (activeLibraryType !== 'signature') {
+      return;
+    }
+
+    setSignaturePlacementColor((current) => normalizeHexColor(current));
+  }, [activeLibraryType, selectedOverlay?.id, selectedOverlay?.type, selectedOverlaySignatureColor]);
 
   useEffect(() => {
     const nextAssets = activeLibraryType === 'stamp' ? stampAssets : signatureAssets;
@@ -726,6 +768,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
         setStampAssets(nextStampAssets);
         setActiveLibraryType('stamp');
         setSelectedAssetId(created.id);
+        setActiveTab('insert');
       } finally {
         await removeFilesIfExist([prepared.processedUri, prepared.previewUri]);
       }
@@ -799,7 +842,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
       const relativeX = (locationX - previewFrame.x) / previewFrame.width;
       const relativeY = (locationY - previewFrame.y) / previewFrame.height;
 
-      const nextFrame = clampOverlayFrame({
+      const snapped = applySnapToFrame({
         x: relativeX - resolvedPlacementSize.width / 2,
         y: relativeY - resolvedPlacementSize.height / 2,
         width: resolvedPlacementSize.width,
@@ -814,16 +857,16 @@ export function PdfEditorScreen({ route, navigation }: Props) {
           const strokeColor =
             typeof metadata.strokeColor === 'string'
               ? normalizeHexColor(metadata.strokeColor)
-              : DEFAULT_SIGNATURE_COLOR;
+              : signaturePlacementColor;
 
           await addSignatureAssetOverlay({
             documentId,
             pageId: currentPage.id,
             assetId: selectedAsset.id,
-            x: nextFrame.x,
-            y: nextFrame.y,
-            width: nextFrame.width,
-            height: nextFrame.height,
+            x: snapped.frame.x,
+            y: snapped.frame.y,
+            width: snapped.frame.width,
+            height: snapped.frame.height,
             opacity: 1,
             rotation: 0,
             strokeColor,
@@ -833,10 +876,10 @@ export function PdfEditorScreen({ route, navigation }: Props) {
             documentId,
             pageId: currentPage.id,
             assetId: selectedAsset.id,
-            x: nextFrame.x,
-            y: nextFrame.y,
-            width: nextFrame.width,
-            height: nextFrame.height,
+            x: snapped.frame.x,
+            y: snapped.frame.y,
+            width: snapped.frame.width,
+            height: snapped.frame.height,
             opacity: 0.95,
             rotation: 0,
           });
@@ -867,6 +910,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
       resolvedPlacementSize.height,
       resolvedPlacementSize.width,
       selectedAsset,
+      signaturePlacementColor,
     ],
   );
 
@@ -941,7 +985,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
       const deltaX = (event.nativeEvent.pageX - session.startPageX) / previewFrame.width;
       const deltaY = (event.nativeEvent.pageY - session.startPageY) / previewFrame.height;
 
-      const nextFrame = clampOverlayFrame({
+      const snapped = applySnapToFrame({
         x: session.initialX + deltaX,
         y: session.initialY + deltaY,
         width: session.width,
@@ -950,10 +994,10 @@ export function PdfEditorScreen({ route, navigation }: Props) {
 
       setOverlayDraft({
         overlayId: session.overlayId,
-        x: nextFrame.x,
-        y: nextFrame.y,
-        width: nextFrame.width,
-        height: nextFrame.height,
+        x: snapped.frame.x,
+        y: snapped.frame.y,
+        width: snapped.frame.width,
+        height: snapped.frame.height,
         rotation: session.rotation,
         opacity: session.opacity,
       });
@@ -1003,7 +1047,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
       const deltaX = (event.nativeEvent.pageX - session.startPageX) / previewFrame.width;
       const deltaY = (event.nativeEvent.pageY - session.startPageY) / previewFrame.height;
 
-      const nextFrame = clampOverlayFrame({
+      const snapped = applySnapToFrame({
         x: session.initialX,
         y: session.initialY,
         width: session.initialWidth + deltaX,
@@ -1012,10 +1056,10 @@ export function PdfEditorScreen({ route, navigation }: Props) {
 
       setOverlayDraft({
         overlayId: session.overlayId,
-        x: nextFrame.x,
-        y: nextFrame.y,
-        width: nextFrame.width,
-        height: nextFrame.height,
+        x: snapped.frame.x,
+        y: snapped.frame.y,
+        width: snapped.frame.width,
+        height: snapped.frame.height,
         rotation: session.rotation,
         opacity: session.opacity,
       });
@@ -1067,7 +1111,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
 
       const delta = scaleDirection === 'up' ? OVERLAY_SCALE_STEP : -OVERLAY_SCALE_STEP;
 
-      const nextFrame = clampOverlayFrame({
+      const snapped = applySnapToFrame({
         x: selectedOverlay.x,
         y: selectedOverlay.y,
         width: selectedOverlay.width + delta,
@@ -1079,10 +1123,10 @@ export function PdfEditorScreen({ route, navigation }: Props) {
 
         await updateOverlayTransform({
           overlayId: selectedOverlay.id,
-          x: nextFrame.x,
-          y: nextFrame.y,
-          width: nextFrame.width,
-          height: nextFrame.height,
+          x: snapped.frame.x,
+          y: snapped.frame.y,
+          width: snapped.frame.width,
+          height: snapped.frame.height,
           rotation: selectedOverlay.rotation,
           opacity: selectedOverlay.opacity,
         });
@@ -1090,6 +1134,50 @@ export function PdfEditorScreen({ route, navigation }: Props) {
         await reloadCurrentPageOverlays();
       } catch (error) {
         Alert.alert('Hata', getErrorMessage(error, 'Öğe boyutu güncellenemedi.'));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [reloadCurrentPageOverlays, selectedOverlay],
+  );
+
+  const applySelectedOverlayPreset = useCallback(
+    async (preset: StampSizePreset) => {
+      if (!selectedOverlay) {
+        Alert.alert('Öğe seç', 'Önce hazır boyut uygulamak istediğin öğeyi seç.');
+        return;
+      }
+
+      const targetWidth = DEFAULT_STAMP_WIDTH_BY_PRESET[preset];
+      const ratio =
+        selectedOverlay.width > 0 && selectedOverlay.height > 0
+          ? selectedOverlay.height / selectedOverlay.width
+          : 0.55;
+      const targetHeight = targetWidth * ratio;
+
+      const snapped = applySnapToFrame({
+        x: selectedOverlay.x,
+        y: selectedOverlay.y,
+        width: targetWidth,
+        height: targetHeight,
+      });
+
+      try {
+        setBusy(true);
+
+        await updateOverlayTransform({
+          overlayId: selectedOverlay.id,
+          x: snapped.frame.x,
+          y: snapped.frame.y,
+          width: snapped.frame.width,
+          height: snapped.frame.height,
+          rotation: selectedOverlay.rotation,
+          opacity: selectedOverlay.opacity,
+        });
+
+        await reloadCurrentPageOverlays();
+      } catch (error) {
+        Alert.alert('Hata', getErrorMessage(error, 'Hazır boyut uygulanamadı.'));
       } finally {
         setBusy(false);
       }
@@ -1131,38 +1219,150 @@ export function PdfEditorScreen({ route, navigation }: Props) {
     [reloadCurrentPageOverlays, selectedOverlay],
   );
 
-  const handleUpdateSelectedSignatureColor = useCallback(
-    async (strokeColor: string) => {
-      if (!selectedOverlay || selectedOverlay.type !== 'signature') {
-        Alert.alert('İmza seç', 'Önce renk değiştirmek istediğin imzayı seç.');
-        return;
+  const handleDuplicateSelectedOverlay = useCallback(async () => {
+    if (!selectedOverlay || !currentPage) {
+      Alert.alert('Öğe seç', 'Önce çoğaltmak istediğin kaşe veya imzayı seç.');
+      return;
+    }
+
+    const assetId = getOverlayAssetId(selectedOverlay);
+
+    if (!assetId) {
+      Alert.alert('Öğe çoğaltılamadı', 'Seçili overlay için asset bilgisi bulunamadı.');
+      return;
+    }
+
+    const snapped = applySnapToFrame({
+      x: Math.min(selectedOverlay.x + 0.03, 1 - selectedOverlay.width),
+      y: Math.min(selectedOverlay.y + 0.03, 1 - selectedOverlay.height),
+      width: selectedOverlay.width,
+      height: selectedOverlay.height,
+    });
+
+    try {
+      setBusy(true);
+
+      let nextOverlayId: number;
+
+      if (selectedOverlay.type === 'signature') {
+        nextOverlayId = await addSignatureAssetOverlay({
+          documentId,
+          pageId: currentPage.id,
+          assetId,
+          x: snapped.frame.x,
+          y: snapped.frame.y,
+          width: snapped.frame.width,
+          height: snapped.frame.height,
+          rotation: selectedOverlay.rotation,
+          opacity: selectedOverlay.opacity,
+          strokeColor: normalizeHexColor(getOverlaySignatureColor(selectedOverlay)),
+        });
+      } else {
+        nextOverlayId = await addStampOverlay({
+          documentId,
+          pageId: currentPage.id,
+          assetId,
+          x: snapped.frame.x,
+          y: snapped.frame.y,
+          width: snapped.frame.width,
+          height: snapped.frame.height,
+          rotation: selectedOverlay.rotation,
+          opacity: selectedOverlay.opacity,
+        });
       }
 
-      if (!selectedSignatureInfo || selectedSignatureInfo.strokes.length === 0) {
+      await reloadCurrentPageOverlays(nextOverlayId);
+    } catch (error) {
+      Alert.alert('Hata', getErrorMessage(error, 'Seçili öğe çoğaltılamadı.'));
+    } finally {
+      setBusy(false);
+    }
+  }, [currentPage, documentId, reloadCurrentPageOverlays, selectedOverlay]);
+
+  const handleApplySelectedOverlayToAllPages = useCallback(async () => {
+    if (!selectedOverlay) {
+      Alert.alert('Kaşe seç', 'Önce tüm sayfalara yaymak istediğin kaşeyi seç.');
+      return;
+    }
+
+    if (selectedOverlay.type !== 'stamp') {
+      Alert.alert(
+        'Kaşe seç',
+        'Bu akış şu anda yalnızca kurumsal kaşe yerleşimini tüm sayfalara uygular.',
+      );
+      return;
+    }
+
+    if (!document || document.pages.length <= 1) {
+      Alert.alert(
+        'Tek sayfalık belge',
+        'Bu belgede kaşeyi yaymak için ikinci bir sayfa bulunmuyor.',
+      );
+      return;
+    }
+
+    try {
+      setBusy(true);
+
+      const result = await applyOverlayToAllPages({
+        overlayId: selectedOverlay.id,
+      });
+
+      await reloadCurrentPageOverlays(selectedOverlay.id);
+
+      if (result.createdOverlayIds.length === 0) {
         Alert.alert(
-          'Hazır imza',
-          'Kütüphaneden eklenen hazır imzalarda renk değiştirme desteklenmiyor.',
+          'Kaşe zaten yayılmış',
+          'Aynı kaşe diğer sayfalarda zaten bu konum ve boyutta yer alıyor.',
         );
         return;
       }
 
-      try {
-        setBusy(true);
+      const skippedMessage =
+        result.skippedPageIds.length > 0
+          ? ` ${result.skippedPageIds.length} sayfa zaten aynı kaşeyi içerdiği için atlandı.`
+          : '';
 
-        await updateSignatureOverlayStyle({
-          overlayId: selectedOverlay.id,
-          strokeColor,
-          opacity: selectedOverlay.opacity,
-        });
+      Alert.alert(
+        'Kaşe tüm sayfalara uygulandı',
+        `${result.createdOverlayIds.length} sayfaya aynı konum ve boyutta eklendi.${skippedMessage}`,
+      );
+    } catch (error) {
+      Alert.alert(
+        'Hata',
+        getErrorMessage(error, 'Seçili kaşe tüm sayfalara uygulanamadı.'),
+      );
+    } finally {
+      setBusy(false);
+    }
+  }, [document, reloadCurrentPageOverlays, selectedOverlay]);
 
-        await reloadCurrentPageOverlays();
-      } catch (error) {
-        Alert.alert('Hata', getErrorMessage(error, 'İmza rengi güncellenemedi.'));
-      } finally {
-        setBusy(false);
+  const updateSelectedSignatureColorValue = useCallback(
+    async (nextColor: string) => {
+      const normalizedColor = normalizeHexColor(nextColor);
+
+      if (selectedOverlay?.type === 'signature') {
+        try {
+          setBusy(true);
+          await updateSignatureOverlayStyle({
+            overlayId: selectedOverlay.id,
+            strokeColor: normalizedColor,
+            opacity: selectedOverlay.opacity,
+          });
+          await reloadCurrentPageOverlays();
+          setSignaturePlacementColor(normalizedColor);
+        } catch (error) {
+          Alert.alert('Hata', getErrorMessage(error, 'İmza rengi güncellenemedi.'));
+        } finally {
+          setBusy(false);
+        }
+
+        return;
       }
+
+      setSignaturePlacementColor(normalizedColor);
     },
-    [reloadCurrentPageOverlays, selectedOverlay, selectedSignatureInfo],
+    [reloadCurrentPageOverlays, selectedOverlay],
   );
 
   const overlayPreviewItems = useMemo<OverlayPreviewItem[]>(() => {
@@ -1191,19 +1391,6 @@ export function PdfEditorScreen({ route, navigation }: Props) {
         };
 
         if (overlay.type === 'signature') {
-          const signature = getOverlaySignaturePresentation(overlay);
-
-          if (signature.strokes.length > 0) {
-            return {
-              kind: 'signature-strokes',
-              overlay,
-              strokes: signature.strokes,
-              color: signature.color,
-              style,
-              isSelected: overlay.id === selectedOverlayId,
-            };
-          }
-
           const assetId = getOverlayAssetId(overlay);
           const asset = allAssets.find(
             (item) => item.id === assetId && item.type === 'signature',
@@ -1214,7 +1401,7 @@ export function PdfEditorScreen({ route, navigation }: Props) {
           }
 
           return {
-            kind: 'signature-asset',
+            kind: 'signature',
             overlay,
             asset,
             style,
@@ -1240,12 +1427,37 @@ export function PdfEditorScreen({ route, navigation }: Props) {
       .filter(Boolean) as OverlayPreviewItem[];
   }, [allAssets, overlayDraft, overlays, previewFrame, selectedOverlayId]);
 
+  const pageStripItems = useMemo<EditorPageStripItem[]>(() => {
+    if (!document) {
+      return [];
+    }
+
+    return document.pages.map((page, index) => ({
+      key: String(page.id),
+      label: `Sayfa ${index + 1}`,
+      imageUri: page.image_path,
+      active: index === currentPageIndex,
+      onPress: () => handleChangePage(index),
+    }));
+  }, [currentPageIndex, document, handleChangePage]);
+
+  const viewOverlaySummary = selectedOverlay
+    ? `${selectedOverlay.type === 'stamp' ? 'Kaşe' : 'İmza'} seçili • ${formatOverlayPosition(
+        selectedOverlay,
+      )}`
+    : selectedAsset
+      ? `Seçili ${activeLibraryType === 'stamp' ? 'kaşe' : 'imza'} • ${selectedAsset.name}`
+      : 'Henüz seçim yok';
+
   if (loading) {
     return (
-      <Screen title="PDF Editör" subtitle="Editör yükleniyor...">
+      <Screen
+        title={documentEditorCopy.screenTitle}
+        subtitle={documentEditorCopy.loadingSubtitle}
+      >
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.loadingText}>Editör yükleniyor...</Text>
+          <Text style={styles.loadingText}>{documentEditorCopy.loadingText}</Text>
         </View>
       </Screen>
     );
@@ -1253,15 +1465,16 @@ export function PdfEditorScreen({ route, navigation }: Props) {
 
   if (!document || !currentPage) {
     return (
-      <Screen title="PDF Editör" subtitle="Düzenlenebilir sayfa bulunamadı.">
+      <Screen
+        title={documentEditorCopy.screenTitle}
+        subtitle={documentEditorCopy.emptySubtitle}
+      >
         <View style={styles.emptyContainer}>
-          <Text style={styles.emptyTitle}>Bu belgede düzenlenecek sayfa yok</Text>
-          <Text style={styles.emptyText}>
-            Belgeyi tekrar tara veya farklı bir belge seç.
-          </Text>
+          <Text style={styles.emptyTitle}>{documentEditorCopy.emptyTitle}</Text>
+          <Text style={styles.emptyText}>{documentEditorCopy.emptyText}</Text>
 
-          <ToolbarButton
-            title="Belge detayına dön"
+          <SmallActionButton
+            title={documentEditorCopy.backToDetail}
             onPress={() => navigation.goBack()}
           />
         </View>
@@ -1271,410 +1484,394 @@ export function PdfEditorScreen({ route, navigation }: Props) {
 
   return (
     <Screen
-      title="PDF Editör"
-      subtitle="Öğeyi tutup sürükle, sağ alt tutamaçtan boyutlandır."
+      title={documentEditorCopy.screenTitle}
+      subtitle={documentEditorCopy.screenSubtitle}
     >
-      <View style={styles.summaryCard}>
-        <View style={styles.summaryTextBlock}>
-          <Text style={styles.summaryTitle}>Düzenlenen sayfa</Text>
-          <Text style={styles.summaryHint}>
-            Sayfa {currentPageIndex + 1} / {document.pages.length} • Bu sayfada{' '}
-            {overlays.length} öğe var
-          </Text>
+      <View style={styles.heroCard}>
+        <View style={styles.heroHeader}>
+          <View style={styles.heroTextWrap}>
+            <Text style={styles.heroEyebrow}>{documentEditorCopy.sessionEyebrow}</Text>
+            <Text style={styles.heroTitle}>{document.title || `Belge #${document.id}`}</Text>
+            <Text style={styles.heroSubtitle}>
+              {documentEditorCopy.resolveSessionSubtitle(
+                currentPageIndex + 1,
+                document.pages.length,
+                overlays.length,
+              )}
+            </Text>
+          </View>
+
+          <View style={styles.heroCounterPill}>
+            <Text style={styles.heroCounterPillText}>{activeLibraryAssets.length}</Text>
+          </View>
         </View>
 
-        <Text style={styles.summaryValue}>{activeLibraryAssets.length}</Text>
+        <View style={styles.heroActionRow}>
+          <SmallActionButton
+            title={documentActionLabels.stampsAndSignatures}
+            onPress={() => navigation.navigate('StampManager')}
+            disabled={busy}
+          />
+          <SmallActionButton
+            title={documentActionLabels.smartErase}
+            onPress={() =>
+              navigation.navigate('SmartErase', {
+                documentId,
+                pageId: currentPage.id,
+              })
+            }
+            disabled={busy}
+          />
+          <SmallActionButton
+            title={documentActionLabels.saveAndBack}
+            onPress={() => navigation.goBack()}
+            disabled={busy}
+            active
+          />
+        </View>
       </View>
 
-      <View style={styles.toolbarRow}>
-        <ToolbarButton
-          title="Yeni kaşe ekle"
-          onPress={handleImportStamp}
-          disabled={busy}
-        />
-        <ToolbarButton
-          title="Kaşe & İmzalar"
-          onPress={() => navigation.navigate('StampManager')}
-          disabled={busy}
-        />
-        <ToolbarButton
-          title="Akıllı sil"
-          onPress={() =>
-            navigation.navigate('SmartErase', {
-              documentId,
-              pageId: currentPage.id,
-            })
-          }
-          disabled={busy}
-        />
-        <ToolbarButton
-          title="Kaydet ve dön"
-          onPress={() => navigation.goBack()}
-          disabled={busy}
-          active
-        />
+      <View style={styles.previewShell}>
+        <View onLayout={handlePreviewLayout} style={styles.previewContainer}>
+          <Image
+            source={{ uri: currentPage.image_path }}
+            resizeMode="contain"
+            style={styles.previewImage}
+          />
+
+          <Pressable
+            style={styles.previewHitArea}
+            onPress={handlePlaceSelectedAsset}
+            disabled={busy}
+          />
+
+          {snapGuides.vertical.map((position, index) => (
+            <View
+              key={`snap-v-${position}-${index}`}
+              pointerEvents="none"
+              style={[
+                styles.snapGuideVertical,
+                {
+                  left: previewFrame.x + position * previewFrame.width,
+                  top: previewFrame.y,
+                  height: previewFrame.height,
+                },
+              ]}
+            />
+          ))}
+
+          {snapGuides.horizontal.map((position, index) => (
+            <View
+              key={`snap-h-${position}-${index}`}
+              pointerEvents="none"
+              style={[
+                styles.snapGuideHorizontal,
+                {
+                  left: previewFrame.x,
+                  top: previewFrame.y + position * previewFrame.height,
+                  width: previewFrame.width,
+                },
+              ]}
+            />
+          ))}
+
+          {overlayPreviewItems.map((item) => (
+            <View
+              key={item.overlay.id}
+              style={item.style}
+              onStartShouldSetResponder={() => !busy}
+              onResponderGrant={(event) => handleOverlayDragStart(item.overlay, event)}
+              onResponderMove={handleOverlayDragMove}
+              onResponderRelease={() => {
+                void handleOverlayDragEnd();
+              }}
+              onResponderTerminate={() => {
+                void handleOverlayDragEnd();
+              }}
+            >
+              <View
+                style={[
+                  styles.overlayContentBox,
+                  item.isSelected && styles.overlayContentBoxSelected,
+                ]}
+              >
+                <Image
+                  source={{ uri: getPreferredAssetPreviewUri(item.asset) }}
+                  resizeMode="contain"
+                  style={[
+                    styles.overlayImage,
+                    item.kind === 'signature'
+                      ? { tintColor: normalizeHexColor(getOverlaySignatureColor(item.overlay)) }
+                      : null,
+                  ]}
+                />
+
+                {item.isSelected ? (
+                  <View pointerEvents="none" style={styles.overlaySelectionBadge}>
+                    <Text style={styles.overlaySelectionBadgeText}>
+                      {item.kind === 'stamp' ? 'Kaşe' : 'İmza'} • {item.asset.name}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+
+              {item.isSelected ? (
+                <>
+                  <View pointerEvents="none" style={styles.overlayCenterDot} />
+
+                  <View
+                    style={styles.resizeHandleHitArea}
+                    onStartShouldSetResponder={() => !busy}
+                    onResponderGrant={(event) => handleOverlayResizeStart(item.overlay, event)}
+                    onResponderMove={handleOverlayResizeMove}
+                    onResponderRelease={() => {
+                      void handleOverlayResizeEnd();
+                    }}
+                    onResponderTerminate={() => {
+                      void handleOverlayResizeEnd();
+                    }}
+                  >
+                    <View style={styles.resizeHandle} />
+                  </View>
+                </>
+              ) : null}
+            </View>
+          ))}
+
+          <View pointerEvents="none" style={styles.previewHintContainer}>
+            <Text style={styles.previewHintText}>
+              {documentEditorCopy.previewHint}
+            </Text>
+
+            {snapGuides.labels.length > 0 ? (
+              <View style={styles.snapHintPill}>
+                <Text style={styles.snapHintPillText}>
+                  {snapGuides.labels.join(' • ')}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+
+          {busy ? (
+            <View style={styles.busyOverlay} pointerEvents="none">
+              <ActivityIndicator size="small" color={colors.primary} />
+            </View>
+          ) : null}
+        </View>
       </View>
 
-      <View style={styles.toolbarRow}>
-        <ToolbarButton
-          title="Önceki sayfa"
-          onPress={() => handleChangePage(currentPageIndex - 1)}
-          disabled={busy || currentPageIndex === 0}
-        />
-        <ToolbarButton
-          title="Sonraki sayfa"
-          onPress={() => handleChangePage(currentPageIndex + 1)}
-          disabled={busy || currentPageIndex === document.pages.length - 1}
-        />
-        <ToolbarButton
-          title="Yeni imza ekle"
-          onPress={() =>
+      <EditorPageStrip
+        title={documentEditorCopy.pageStripTitle}
+        subtitle={documentEditorCopy.pageStripSubtitle}
+        items={pageStripItems}
+      />
+
+      <View style={styles.contextCard}>
+        <Text style={styles.contextLabel}>{documentEditorCopy.currentStateLabel}</Text>
+        <Text style={styles.contextValue}>{viewOverlaySummary}</Text>
+      </View>
+
+      <EditorToolTabBar
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        items={[
+          {
+            key: 'view',
+            label: documentEditorCopy.tabLabels.view,
+            icon: 'image-outline',
+          },
+          {
+            key: 'format',
+            label: documentEditorCopy.tabLabels.format,
+            icon: 'options-outline',
+          },
+          {
+            key: 'insert',
+            label: documentEditorCopy.tabLabels.insert,
+            icon: 'add-circle-outline',
+          },
+        ]}
+      />
+
+      {activeTab === 'insert' ? (
+        <EditorAssetTray
+          activeLibraryType={activeLibraryType}
+          onChangeLibraryType={(type) => {
+            setActiveLibraryType(type);
+            setActiveTab('insert');
+          }}
+          assets={activeLibraryAssets}
+          selectedAssetId={selectedAssetId}
+          onSelectAsset={setSelectedAssetId}
+          stampSizePreset={stampSizePreset}
+          onChangeStampSizePreset={setStampSizePreset}
+          signaturePlacementColor={signaturePlacementColor}
+          signatureColors={SIGNATURE_OVERLAY_COLORS}
+          onSelectSignatureColor={(color) => {
+            void updateSelectedSignatureColorValue(color);
+          }}
+          busy={busy}
+          onImportStamp={() => {
+            void handleImportStamp();
+          }}
+          onOpenStampManager={() => navigation.navigate('StampManager')}
+          onCreateSignature={() =>
             navigation.navigate('SignaturePad', {
               documentId,
               pageId: currentPage.id,
             })
           }
-          disabled={busy}
         />
-      </View>
-
-      <View style={styles.sizeCard}>
-        <Text style={styles.sizeCardTitle}>Kütüphane</Text>
-
-        <View style={styles.sizeRow}>
-          <ToolbarButton
-            title="Kaşeler"
-            onPress={() => setActiveLibraryType('stamp')}
-            active={activeLibraryType === 'stamp'}
-            disabled={busy}
-          />
-          <ToolbarButton
-            title="İmzalarım"
-            onPress={() => setActiveLibraryType('signature')}
-            active={activeLibraryType === 'signature'}
-            disabled={busy}
-          />
-        </View>
-
-        <Text style={styles.sizeHint}>
-          Boş alana dokununca seçili {activeLibraryType === 'stamp' ? 'kaşe' : 'hazır imza'} yerleşir.
-        </Text>
-      </View>
-
-      <View style={styles.sizeCard}>
-        <Text style={styles.sizeCardTitle}>Yeni öğe boyutu</Text>
-
-        <View style={styles.sizeRow}>
-          <ToolbarButton
-            title="Küçük"
-            onPress={() => setStampSizePreset('small')}
-            active={stampSizePreset === 'small'}
-            disabled={busy}
-          />
-          <ToolbarButton
-            title="Orta"
-            onPress={() => setStampSizePreset('medium')}
-            active={stampSizePreset === 'medium'}
-            disabled={busy}
-          />
-          <ToolbarButton
-            title="Büyük"
-            onPress={() => setStampSizePreset('large')}
-            active={stampSizePreset === 'large'}
-            disabled={busy}
-          />
-        </View>
-
-        <Text style={styles.sizeHint}>
-          Bu boyut yeni eklenecek kaşe ve hazır imzalarda kullanılır.
-        </Text>
-      </View>
-
-      {selectedOverlay ? (
-        <View style={styles.adjustCard}>
-          <Text style={styles.adjustTitle}>Seçili öğe ayarları</Text>
-          <Text style={styles.adjustHint}>
-            {selectedOverlay.type === 'stamp' ? 'Kaşe' : 'İmza'} • {formatOverlayPosition(selectedOverlay)}
-          </Text>
-          <Text style={styles.adjustHint}>
-            {formatOverlaySize(selectedOverlay)} • {formatOverlayOpacity(selectedOverlay.opacity)}
-          </Text>
-
-          {selectedOverlay.type === 'signature' &&
-          selectedSignatureInfo &&
-          selectedSignatureInfo.strokes.length > 0 ? (
-            <>
-              <View style={styles.signatureMetaRow}>
-                <Text style={styles.signatureMetaLabel}>İmza rengi</Text>
-                <View
-                  style={[
-                    styles.signatureColorPreview,
-                    { backgroundColor: selectedSignatureInfo.color },
-                  ]}
-                />
-                <Text style={styles.signatureMetaValue}>{selectedSignatureInfo.color}</Text>
-              </View>
-
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.colorPaletteRow}
-              >
-                {SIGNATURE_COLOR_PALETTE.map((color) => (
-                  <SignatureColorSwatch
-                    key={color}
-                    color={color}
-                    selected={selectedSignatureInfo.color === color}
-                    onPress={() => {
-                      void handleUpdateSelectedSignatureColor(color);
-                    }}
-                    disabled={busy}
-                  />
-                ))}
-              </ScrollView>
-            </>
-          ) : null}
-
-          {selectedOverlay.type === 'signature' &&
-          selectedSignatureInfo &&
-          selectedSignatureInfo.strokes.length === 0 ? (
-            <Text style={styles.readySignatureHint}>
-              Hazır imza seçili. Konum, boyut ve opaklık düzenlenebilir.
-            </Text>
-          ) : null}
-
-          <View style={styles.adjustRow}>
-            <ToolbarButton
-              title="Küçült"
-              onPress={() => {
-                void updateSelectedOverlaySize('down');
-              }}
-              disabled={busy}
-            />
-            <ToolbarButton
-              title="Büyüt"
-              onPress={() => {
-                void updateSelectedOverlaySize('up');
-              }}
-              disabled={busy}
-            />
-          </View>
-
-          <View style={styles.adjustRow}>
-            <ToolbarButton
-              title="Daha saydam"
-              onPress={() => {
-                void updateSelectedOverlayOpacity('down');
-              }}
-              disabled={busy}
-            />
-            <ToolbarButton
-              title="Daha belirgin"
-              onPress={() => {
-                void updateSelectedOverlayOpacity('up');
-              }}
-              disabled={busy}
-            />
-          </View>
-        </View>
       ) : null}
 
-      <View onLayout={handlePreviewLayout} style={styles.previewContainer}>
-        <Image
-          source={{ uri: currentPage.image_path }}
-          resizeMode="contain"
-          style={styles.previewImage}
+      {activeTab === 'format' ? (
+        <EditorInspectorPanel
+          selectedOverlayLabel={
+            selectedOverlay
+              ? `${selectedOverlay.type === 'stamp' ? 'Kaşe' : 'İmza'} • ${
+                  selectedOverlayAsset?.name ?? 'Öğe'
+                }`
+              : null
+          }
+          selectedOverlayMeta={
+            selectedOverlay ? formatOverlayPosition(selectedOverlay) : null
+          }
+          selectedOverlayDetail={
+            selectedOverlay
+              ? `${formatOverlaySize(selectedOverlay)} • ${formatOverlayOpacity(
+                  selectedOverlay.opacity,
+                )}`
+              : null
+          }
+          isSignature={selectedOverlay?.type === 'signature'}
+          signatureColor={selectedOverlaySignatureColor}
+          signatureColors={SIGNATURE_OVERLAY_COLORS}
+          onSelectSignatureColor={(color) => {
+            void updateSelectedSignatureColorValue(color);
+          }}
+          onScaleDown={() => {
+            void updateSelectedOverlaySize('down');
+          }}
+          onScaleUp={() => {
+            void updateSelectedOverlaySize('up');
+          }}
+          onApplyPreset={(preset) => {
+            void applySelectedOverlayPreset(preset);
+          }}
+          onOpacityDown={() => {
+            void updateSelectedOverlayOpacity('down');
+          }}
+          onOpacityUp={() => {
+            void updateSelectedOverlayOpacity('up');
+          }}
+          onApplyToAllPages={() => {
+            void handleApplySelectedOverlayToAllPages();
+          }}
+          applyToAllPagesLabel={documentActionLabels.applyToAllPages}
+          showApplyToAllPages={
+            selectedOverlay?.type === 'stamp' && document.pages.length > 1
+          }
+          onDuplicate={() => {
+            void handleDuplicateSelectedOverlay();
+          }}
+          onDelete={() => {
+            if (selectedOverlay) {
+              void handleDeleteOverlay(selectedOverlay.id);
+            }
+          }}
+          busy={busy}
         />
+      ) : null}
 
-        <Pressable
-          style={styles.previewHitArea}
-          onPress={handlePlaceSelectedAsset}
-          disabled={busy}
-        />
+      {activeTab === 'view' ? (
+        <>
+          <View style={styles.viewActionCard}>
+            <Text style={styles.viewActionTitle}>{documentEditorCopy.viewTitle}</Text>
+            <Text style={styles.viewActionText}>{documentEditorCopy.viewText}</Text>
 
-        {overlayPreviewItems.map((item) => (
-          <View
-            key={item.overlay.id}
-            style={item.style}
-            onStartShouldSetResponder={() => !busy}
-            onResponderGrant={(event) => handleOverlayDragStart(item.overlay, event)}
-            onResponderMove={handleOverlayDragMove}
-            onResponderRelease={() => {
-              void handleOverlayDragEnd();
-            }}
-            onResponderTerminate={() => {
-              void handleOverlayDragEnd();
-            }}
-          >
-            <View
-              style={[
-                styles.overlayContentBox,
-                item.isSelected && styles.overlayContentBoxSelected,
-              ]}
-            >
-              {item.kind === 'signature-strokes' ? (
-                <SignaturePreview
-                  strokes={item.strokes}
-                  color={item.color}
-                  selected={item.isSelected}
-                />
-              ) : (
-                <Image
-                  source={{ uri: getPreferredAssetPreviewUri(item.asset) }}
-                  resizeMode="contain"
-                  style={styles.overlayImage}
-                />
-              )}
-            </View>
-
-            {item.isSelected ? (
-              <View
-                style={styles.resizeHandleHitArea}
-                onStartShouldSetResponder={() => !busy}
-                onResponderGrant={(event) => handleOverlayResizeStart(item.overlay, event)}
-                onResponderMove={handleOverlayResizeMove}
-                onResponderRelease={() => {
-                  void handleOverlayResizeEnd();
-                }}
-                onResponderTerminate={() => {
-                  void handleOverlayResizeEnd();
-                }}
-              >
-                <View style={styles.resizeHandle} />
-              </View>
-            ) : null}
-          </View>
-        ))}
-
-        <View pointerEvents="none" style={styles.previewHintContainer}>
-          <Text style={styles.previewHintText}>
-            Boş alana dokun: seçili {activeLibraryType === 'stamp' ? 'kaşe' : 'hazır imza'} • Öğeyi tut ve sürükle: taşı • Sağ alt tutamaç: büyüt/küçült
-          </Text>
-        </View>
-
-        {busy ? (
-          <View style={styles.busyOverlay} pointerEvents="none">
-            <ActivityIndicator size="small" color={colors.primary} />
-          </View>
-        ) : null}
-      </View>
-
-      <Text style={styles.selectedAssetText}>
-        Seçili {activeLibraryType === 'stamp' ? 'kaşe' : 'imza'}:{' '}
-        {selectedAsset ? selectedAsset.name : 'Yok'}
-      </Text>
-
-      {activeLibraryAssets.length === 0 ? (
-        <View style={styles.emptyAssetCard}>
-          <Text style={styles.emptyAssetTitle}>
-            Henüz {activeLibraryType === 'stamp' ? 'kaşe' : 'imza'} yok
-          </Text>
-          <Text style={styles.emptyAssetText}>
-            {activeLibraryType === 'stamp'
-              ? 'Kaşe ekleyip arka planını temizledikten sonra tekrar kullanabilir, farklı belgelere yerleştirebilirsin.'
-              : 'İmza ekranından kaydettiğin imzalar burada görünür. Hazır imzayı seçip boş alana dokunarak tekrar yerleştirebilirsin.'}
-          </Text>
-        </View>
-      ) : (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.assetList}
-          style={styles.assetScroller}
-        >
-          {activeLibraryAssets.map((asset) => (
-            <Pressable
-              key={asset.id}
-              onPress={() => setSelectedAssetId(asset.id)}
-              style={({ pressed }) => [
-                styles.assetCard,
-                selectedAssetId === asset.id && styles.assetCardSelected,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Image
-                source={{ uri: getPreferredAssetPreviewUri(asset) }}
-                resizeMode="contain"
-                style={styles.assetImage}
+            <View style={styles.heroActionRow}>
+              <SmallActionButton
+                title={documentActionLabels.previousPage}
+                onPress={() => handleChangePage(currentPageIndex - 1)}
+                disabled={busy || currentPageIndex === 0}
               />
-              <Text numberOfLines={2} style={styles.assetName}>
-                {asset.name}
+              <SmallActionButton
+                title={documentActionLabels.nextPage}
+                onPress={() => handleChangePage(currentPageIndex + 1)}
+                disabled={busy || currentPageIndex === document.pages.length - 1}
+              />
+              <SmallActionButton
+                title={documentActionLabels.newSignature}
+                onPress={() =>
+                  navigation.navigate('SignaturePad', {
+                    documentId,
+                    pageId: currentPage.id,
+                  })
+                }
+                disabled={busy}
+              />
+            </View>
+          </View>
+
+          <View style={styles.overlayCard}>
+            <Text style={styles.overlayCardTitle}>
+              {documentEditorCopy.pageItemsTitle}
+            </Text>
+
+            {overlays.length === 0 ? (
+              <Text style={styles.overlayEmptyText}>
+                {documentEditorCopy.pageItemsEmpty}
               </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-      )}
+            ) : (
+              overlays.map((overlay, index) => {
+                const assetId = getOverlayAssetId(overlay);
+                const asset = allAssets.find((item) => item.id === assetId);
+                const isSelected = selectedOverlayId === overlay.id;
+                const isSignature = overlay.type === 'signature';
 
-      <View style={styles.overlayCard}>
-        <Text style={styles.overlayCardTitle}>Bu sayfadaki öğeler</Text>
-
-        {overlays.length === 0 ? (
-          <Text style={styles.overlayEmptyText}>
-            Henüz öğe yok. Kaşe yerleştir veya imza ekle.
-          </Text>
-        ) : (
-          overlays.map((overlay, index) => {
-            const assetId = getOverlayAssetId(overlay);
-            const asset = allAssets.find((item) => item.id === assetId);
-            const isSelected = selectedOverlayId === overlay.id;
-            const isSignature = overlay.type === 'signature';
-            const signature = isSignature
-              ? getOverlaySignaturePresentation(overlay)
-              : null;
-
-            return (
-              <Pressable
-                key={overlay.id}
-                onPress={() => setSelectedOverlayId(overlay.id)}
-                style={({ pressed }) => [
-                  styles.overlayRow,
-                  index > 0 && styles.overlayRowBorder,
-                  isSelected && styles.overlayRowSelected,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <View style={styles.overlayMeta}>
-                  <Text style={styles.overlayRowText}>
-                    {isSignature ? `İmza #${overlay.id}` : `Kaşe #${overlay.id}`}
-                  </Text>
-                  <Text style={styles.overlayRowHint}>
-                    {isSignature
-                      ? signature && signature.strokes.length > 0
-                        ? `Serbest imza • ${formatOverlayPosition(overlay)}`
-                        : `${asset?.name ?? 'Hazır imza'} • ${formatOverlayPosition(overlay)}`
-                      : `${asset?.name ?? 'Bilinmeyen kaşe'} • ${formatOverlayPosition(overlay)}`}
-                  </Text>
-
-                  <Text style={styles.overlayRowHint}>
-                    {formatOverlaySize(overlay)} • {formatOverlayOpacity(overlay.opacity)}
-                  </Text>
-
-                  {isSignature && signature ? (
-                    <View style={styles.overlaySignatureInfoRow}>
-                      <View
-                        style={[
-                          styles.overlaySignatureColorDot,
-                          { backgroundColor: signature.color },
-                        ]}
-                      />
-                      <Text style={styles.overlaySignatureInfoText}>
-                        {signature.color}
+                return (
+                  <Pressable
+                    key={overlay.id}
+                    onPress={() => {
+                      setSelectedOverlayId(overlay.id);
+                      setActiveTab('format');
+                    }}
+                    style={({ pressed }) => [
+                      styles.overlayRow,
+                      index > 0 && styles.overlayRowBorder,
+                      isSelected && styles.overlayRowSelected,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <View style={styles.overlayMeta}>
+                      <Text style={styles.overlayRowText}>
+                        {isSignature ? `İmza #${overlay.id}` : `Kaşe #${overlay.id}`}
+                      </Text>
+                      <Text style={styles.overlayRowHint}>
+                        {(asset?.name ?? 'Varlık')} • {formatOverlayPosition(overlay)}
+                      </Text>
+                      <Text style={styles.overlayRowHint}>
+                        {formatOverlaySize(overlay)} • {formatOverlayOpacity(overlay.opacity)}
                       </Text>
                     </View>
-                  ) : null}
-                </View>
 
-                <ToolbarButton
-                  title="Sil"
-                  onPress={() => handleDeleteOverlay(overlay.id)}
-                  disabled={busy}
-                  danger
-                />
-              </Pressable>
-            );
-          })
-        )}
-      </View>
+                    <View style={styles.overlayRowActions}>
+                      <SmallActionButton
+                        title="Sil"
+                        onPress={() => {
+                          void handleDeleteOverlay(overlay.id);
+                        }}
+                        disabled={busy}
+                        danger
+                      />
+                    </View>
+                  </Pressable>
+                );
+              })
+            )}
+          </View>
+        </>
+      ) : null}
     </Screen>
   );
 }
@@ -1702,175 +1899,103 @@ const styles = StyleSheet.create({
     color: colors.muted,
     lineHeight: 22,
   },
-  summaryCard: {
+  heroCard: {
     backgroundColor: colors.card,
     borderColor: colors.border,
     borderWidth: 1,
     borderRadius: Radius.xl,
-    padding: 16,
-    marginBottom: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+    padding: Spacing.lg,
+    gap: Spacing.md,
+    marginBottom: Spacing.lg,
+    ...Shadows.sm,
   },
-  summaryTextBlock: {
+  heroHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: Spacing.md,
+  },
+  heroTextWrap: {
     flex: 1,
     gap: 4,
   },
-  summaryTitle: {
-    color: colors.text,
-    fontSize: 15,
+  heroEyebrow: {
+    ...Typography.caption,
+    color: colors.primary,
     fontWeight: '800',
+    textTransform: 'uppercase',
   },
-  summaryHint: {
-    color: colors.muted,
-    lineHeight: 20,
-  },
-  summaryValue: {
+  heroTitle: {
+    ...Typography.titleLarge,
     color: colors.text,
-    fontSize: 24,
-    fontWeight: '800',
   },
-  toolbarRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 12,
-    flexWrap: 'wrap',
+  heroSubtitle: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 18,
   },
-  toolbarButton: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-  },
-  toolbarButtonActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  toolbarButtonDanger: {
-    backgroundColor: '#2A1620',
-    borderColor: '#4B2632',
-  },
-  toolbarButtonDisabled: {
-    opacity: 0.5,
-  },
-  toolbarButtonText: {
-    color: colors.text,
-    fontWeight: '700',
-  },
-  toolbarButtonTextActive: {
-    color: colors.onPrimary,
-  },
-  toolbarButtonTextDanger: {
-    color: '#FCA5A5',
-  },
-  colorSwatchOuter: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+  heroCounterPill: {
+    minWidth: 44,
+    minHeight: 44,
+    borderRadius: 22,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: colors.card,
+    backgroundColor: colors.surfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  colorSwatchOuterSelected: {
-    borderColor: colors.primary,
-    borderWidth: 2,
-  },
-  colorSwatchInner: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-  },
-  sizeCard: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: Radius.lg,
-    padding: 14,
-    marginBottom: 16,
-    gap: 10,
-  },
-  sizeCardTitle: {
+  heroCounterPillText: {
     ...Typography.titleSmall,
     color: colors.text,
+    fontWeight: '900',
   },
-  sizeRow: {
+  heroActionRow: {
     flexDirection: 'row',
-    gap: 10,
     flexWrap: 'wrap',
+    gap: Spacing.sm,
   },
-  sizeHint: {
-    ...Typography.bodySmall,
-    color: colors.muted,
-  },
-  adjustCard: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderWidth: 1,
+  smallActionButton: {
+    minHeight: 38,
     borderRadius: Radius.lg,
-    padding: 14,
-    marginBottom: 16,
-    gap: 10,
-  },
-  adjustTitle: {
-    ...Typography.titleSmall,
-    color: colors.text,
-  },
-  adjustHint: {
-    ...Typography.bodySmall,
-    color: colors.muted,
-  },
-  adjustRow: {
-    flexDirection: 'row',
-    gap: 10,
-    flexWrap: 'wrap',
-  },
-  signatureMetaRow: {
-    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+    paddingHorizontal: Spacing.md,
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'center',
   },
-  signatureMetaLabel: {
-    ...Typography.bodySmall,
-    color: colors.textSecondary,
+  smallActionButtonActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
-  signatureMetaValue: {
+  smallActionButtonDanger: {
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    borderColor: 'rgba(239, 68, 68, 0.24)',
+  },
+  smallActionButtonText: {
     ...Typography.bodySmall,
     color: colors.text,
-    fontWeight: '700',
+    fontWeight: '800',
   },
-  signatureColorPreview: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    borderWidth: 1,
-    borderColor: colors.border,
+  smallActionButtonTextActive: {
+    color: colors.onPrimary,
   },
-  colorPaletteRow: {
-    gap: 10,
-    paddingRight: 16,
+  smallActionButtonTextDanger: {
+    color: '#F87171',
   },
-  readySignatureHint: {
-    ...Typography.bodySmall,
-    color: colors.textSecondary,
-  },
-  pressed: {
-    opacity: 0.92,
+  previewShell: {
+    marginBottom: Spacing.lg,
   },
   previewContainer: {
     width: '100%',
-    height: 420,
+    height: 460,
     borderRadius: Radius.xl,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: '#0F141B',
     overflow: 'hidden',
-    marginBottom: 16,
     position: 'relative',
+    ...Shadows.sm,
   },
   previewImage: {
     width: '100%',
@@ -1879,6 +2004,16 @@ const styles = StyleSheet.create({
   previewHitArea: {
     ...StyleSheet.absoluteFillObject,
   },
+  snapGuideVertical: {
+    position: 'absolute',
+    width: 1,
+    backgroundColor: 'rgba(53, 199, 111, 0.75)',
+  },
+  snapGuideHorizontal: {
+    position: 'absolute',
+    height: 1,
+    backgroundColor: 'rgba(53, 199, 111, 0.75)',
+  },
   overlayContentBox: {
     width: '100%',
     height: '100%',
@@ -1886,12 +2021,13 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: 'transparent',
+    backgroundColor: 'rgba(255,255,255,0.01)',
   },
   overlayContentBoxSelected: {
     borderWidth: 2,
     borderColor: colors.primary,
     shadowColor: colors.primary,
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.24,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 0 },
     elevation: 4,
@@ -1900,13 +2036,33 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  signatureOverlayBox: {
-    width: '100%',
-    height: '100%',
-    backgroundColor: 'transparent',
+  overlaySelectionBadge: {
+    position: 'absolute',
+    left: 6,
+    top: 6,
+    right: 6,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(11, 15, 20, 0.72)',
   },
-  signatureOverlayBoxSelected: {
-    backgroundColor: 'rgba(255,255,255,0.04)',
+  overlaySelectionBadgeText: {
+    color: '#E5EEF7',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  overlayCenterDot: {
+    position: 'absolute',
+    left: '50%',
+    top: '50%',
+    marginLeft: -4,
+    marginTop: -4,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.primary,
+    borderWidth: 1,
+    borderColor: colors.background,
   },
   resizeHandleHitArea: {
     position: 'absolute',
@@ -1930,6 +2086,7 @@ const styles = StyleSheet.create({
     left: 12,
     right: 12,
     bottom: 12,
+    gap: 8,
   },
   previewHintText: {
     color: '#CBD5E1',
@@ -1941,60 +2098,64 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     borderRadius: 10,
   },
+  snapHintPill: {
+    alignSelf: 'center',
+    backgroundColor: 'rgba(53, 199, 111, 0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(53, 199, 111, 0.32)',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  snapHintPillText: {
+    color: '#CFF7DE',
+    fontSize: 12,
+    fontWeight: '700',
+  },
   busyOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(11, 15, 20, 0.18)',
   },
-  selectedAssetText: {
-    color: colors.muted,
-    marginBottom: 10,
-    fontWeight: '600',
-  },
-  assetScroller: {
-    marginBottom: 18,
-  },
-  assetList: {
-    gap: 10,
-  },
-  assetCard: {
-    width: 96,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    padding: 8,
-  },
-  assetCardSelected: {
-    borderColor: colors.primary,
-  },
-  assetImage: {
-    width: '100%',
-    height: 60,
-    marginBottom: 8,
-  },
-  assetName: {
-    color: colors.text,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  emptyAssetCard: {
-    backgroundColor: colors.card,
+  contextCard: {
     borderRadius: Radius.xl,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: 14,
-    marginBottom: 18,
+    backgroundColor: colors.card,
+    padding: Spacing.md,
+    gap: 4,
+    marginBottom: Spacing.lg,
+    ...Shadows.sm,
   },
-  emptyAssetTitle: {
+  contextLabel: {
+    ...Typography.caption,
+    color: colors.primary,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  contextValue: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 18,
+  },
+  viewActionCard: {
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    padding: Spacing.lg,
+    gap: Spacing.md,
+    ...Shadows.sm,
+  },
+  viewActionTitle: {
+    ...Typography.titleSmall,
     color: colors.text,
-    fontWeight: '700',
-    marginBottom: 6,
   },
-  emptyAssetText: {
-    color: colors.muted,
-    lineHeight: 20,
+  viewActionText: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 18,
   },
   overlayCard: {
     backgroundColor: colors.card,
@@ -2002,6 +2163,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     padding: 14,
+    marginTop: Spacing.lg,
+    ...Shadows.sm,
   },
   overlayCardTitle: {
     color: colors.text,
@@ -2031,6 +2194,13 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 2,
   },
+  overlayRowActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+  },
   overlayRowText: {
     color: colors.text,
     fontWeight: '700',
@@ -2039,22 +2209,10 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 12,
   },
-  overlaySignatureInfoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 4,
+  actionDisabled: {
+    opacity: 0.56,
   },
-  overlaySignatureColorDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  overlaySignatureInfoText: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
+  pressed: {
+    opacity: 0.92,
   },
 });

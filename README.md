@@ -53,3 +53,27 @@ Mevcut odak modüller:
 npm install
 npx expo prebuild
 npx expo run:android
+```
+
+## Runtime env örneği
+
+Çeviri için resmi provider seçimi env üzerinden yapılır. `auto` modunda öncelik sırası:
+DeepL API Free -> Azure Translator -> LibreTranslate.
+
+```bash
+EXPO_PUBLIC_TRANSLATION_PROVIDER=auto
+EXPO_PUBLIC_TRANSLATION_TIMEOUT_MS=15000
+
+# DeepL API Free
+EXPO_PUBLIC_DEEPL_API_KEY=
+EXPO_PUBLIC_DEEPL_API_BASE_URL=https://api-free.deepl.com
+
+# Azure Translator
+EXPO_PUBLIC_AZURE_TRANSLATOR_KEY=
+EXPO_PUBLIC_AZURE_TRANSLATOR_REGION=
+EXPO_PUBLIC_AZURE_TRANSLATOR_ENDPOINT=https://api.cognitive.microsofttranslator.com
+
+# Self-host LibreTranslate
+EXPO_PUBLIC_LIBRETRANSLATE_BASE_URL=
+EXPO_PUBLIC_LIBRETRANSLATE_API_KEY=
+```

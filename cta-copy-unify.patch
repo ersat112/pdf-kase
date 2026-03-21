@@ -1,0 +1,437 @@
+diff --git a/src/modules/documents/document-action-copy.ts b/src/modules/documents/document-action-copy.ts
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/src/modules/documents/document-action-copy.ts
+@@ -0,0 +1,45 @@
++export const documentActionCopy = {
++  library: {
++    short: 'Belge merkezi',
++  },
++  edit: {
++    short: 'Düzenle',
++    caption: 'Kaşe, imza ve sayfalar',
++  },
++  ocr: {
++    short: 'OCR',
++    retry: 'OCR tekrar dene',
++    caption: 'Sayfalardaki metni algıla',
++  },
++  pdf: {
++    create: 'PDF üret',
++    refresh: 'PDF yenile',
++    share: 'PDF paylaş',
++    captionCreate: 'Güncel sayfalardan PDF oluştur',
++    captionRefresh: 'Mevcut PDF çıktısını güncelle',
++  },
++  word: {
++    short: 'Word',
++    create: 'Word üret',
++    refresh: 'Word yenile',
++    share: 'Word paylaş',
++    captionCreate: 'OCR metnini Word olarak hazırla',
++    captionRefresh: 'Mevcut Word çıktısını güncelle',
++  },
++  excel: {
++    create: 'Excel üret',
++    caption: 'OCR metnini Excel olarak hazırla',
++  },
++  translate: {
++    short: 'Çevir',
++    caption: 'OCR metnini Türkçeye çevir',
++  },
++  share: {
++    short: 'Paylaş',
++    captionReady: 'PDF hazır',
++    captionNeedsPdf: 'Önce PDF',
++  },
++  print: {
++    short: 'Yazdır',
++    captionReady: 'Sistem paneli',
++    captionNeedsPdf: 'Önce PDF',
++  },
++  editor: {
++    assetLibrary: 'Kaşe & İmzalar',
++    smartErase: 'Akıllı sil',
++    saveAndBack: 'Kaydet ve dön',
++    previousPage: 'Önceki sayfa',
++    nextPage: 'Sonraki sayfa',
++    newSignature: 'Yeni imza',
++  },
++} as const;
++
++export function getPdfActionLabel(hasPdf: boolean) {
++  return hasPdf ? documentActionCopy.pdf.refresh : documentActionCopy.pdf.create;
++}
++
++export function getWordActionLabel(hasWord: boolean) {
++  return hasWord ? documentActionCopy.word.refresh : documentActionCopy.word.create;
++}
+diff --git a/src/modules/documents/document-presentation.ts b/src/modules/documents/document-presentation.ts
+index 4f6ea36..7b0f911 100644
+--- a/src/modules/documents/document-presentation.ts
++++ b/src/modules/documents/document-presentation.ts
+@@ -1,5 +1,6 @@
+ // src/modules/documents/document-presentation.ts
+ import { Ionicons } from '@expo/vector-icons';
+ import type { ComponentProps } from 'react';
++import { documentActionCopy } from './document-action-copy';
+ 
+ export type DocumentSurfaceItem = {
+   id: number;
+@@ -284,7 +285,7 @@ export function buildHomeDocumentPipelineSummary(
+     ],
+     actions: [
+       {
+-        label: 'Belge merkezini aç',
++        label: documentActionCopy.library.short,
+         onPress: options.onOpenDocuments,
+         variant: 'secondary',
+       },
+@@ -383,7 +384,7 @@ export function buildDocumentDetailPipelineSummary(
+       stats,
+       actions: [
+         {
+-          label: 'Belgelerim',
++          label: documentActionCopy.library.short,
+           onPress: options.onOpenDocuments,
+           variant: 'secondary',
+           disabled: options.actionDisabled,
+@@ -406,13 +407,13 @@ export function buildDocumentDetailPipelineSummary(
+       stats,
+       actions: [
+         {
+-          label: 'Editörde aç',
++          label: documentActionCopy.edit.short,
+           onPress: options.onOpenEditor,
+           variant: 'secondary',
+           disabled: options.actionDisabled,
+         },
+         {
+-          label: 'OCR tekrar dene',
++          label: documentActionCopy.ocr.retry,
+           onPress: options.onRunOcr,
+           variant: 'primary',
+           disabled: options.actionDisabled,
+@@ -455,7 +456,7 @@ export function buildDocumentDetailPipelineSummary(
+       stats,
+       actions: [
+         {
+-          label: 'Editörde aç',
++          label: documentActionCopy.edit.short,
+           onPress: options.onOpenEditor,
+           variant: 'secondary',
+           disabled: options.actionDisabled,
+@@ -468,15 +469,15 @@ export function buildDocumentDetailPipelineSummary(
+     title: 'Belge taslak durumda',
+     subtitle: 'Akış henüz tamamlanmadı.',
+     message:
+-      'Editörde açabilir, OCR başlatabilir ve ardından export akışına geçebilirsin.',
++      'Düzenleme yüzeyine geçebilir, OCR başlatabilir ve ardından export akışına devam edebilirsin.',
+     tone: 'default',
+     icon: 'document-text-outline',
+     stats,
+     actions: [
+       {
+-        label: 'Editörde aç',
++        label: documentActionCopy.edit.short,
+         onPress: options.onOpenEditor,
+         variant: 'secondary',
+         disabled: options.actionDisabled,
+       },
+       {
+-        label: 'OCR çıkar',
++        label: documentActionCopy.ocr.short,
+         onPress: options.onRunOcr,
+         variant: 'primary',
+         disabled: options.actionDisabled,
+diff --git a/src/screens/documents/DocumentDetailScreen.tsx b/src/screens/documents/DocumentDetailScreen.tsx
+index dce3bba..26ce4d1 100644
+--- a/src/screens/documents/DocumentDetailScreen.tsx
++++ b/src/screens/documents/DocumentDetailScreen.tsx
+@@ -33,6 +33,11 @@ import {
+   listDocumentAuditEvents,
+   logDocumentAuditEvent,
+ } from '../../modules/documents/document-audit.service';
++import {
++  documentActionCopy,
++  getPdfActionLabel,
++  getWordActionLabel,
++} from '../../modules/documents/document-action-copy';
+ import {
+   buildDocumentDetailPipelineSummary,
+   resolveDocumentIsFavorite,
+@@ -302,33 +307,33 @@ export function DocumentDetailScreen({
+   const previewImageUri = selectedPage?.image_path ?? documentThumbnailPath ?? null;
+ 
+-  const pdfActionLabel = documentPdfPath
+-    ? 'PDF yeniden üret'
+-    : 'PDF üret';
+-  const wordActionLabel = documentWordPath
+-    ? 'Word yeniden üret'
+-    : 'Word dışa aktar';
++  const pdfActionLabel = getPdfActionLabel(Boolean(documentPdfPath));
++  const wordActionLabel = getWordActionLabel(Boolean(documentWordPath));
+ 
+   const pdfActionCaption = !billingHydrated
+     ? 'Premium durumu yükleniyor'
+     : capabilities.canExportPdf
+       ? documentPdfPath
+-        ? 'Mevcut PDF çıktısını güncelle'
+-        : 'Güncel sayfalardan PDF oluştur'
++        ? documentActionCopy.pdf.captionRefresh
++        : documentActionCopy.pdf.captionCreate
+       : 'Premium ile PDF kaydetmeyi aç';
+ 
+   const wordActionCaption = !billingHydrated
+     ? 'Premium durumu yükleniyor'
+     : capabilities.canExportWord
+       ? documentWordPath
+-        ? 'Mevcut Word çıktısını güncelle'
+-        : 'OCR metnini Word olarak hazırla'
++        ? documentActionCopy.word.captionRefresh
++        : documentActionCopy.word.captionCreate
+       : 'Premium ile Word kaydetmeyi aç';
+ 
+   const excelActionCaption = !billingHydrated
+     ? 'Premium durumu yükleniyor'
+     : capabilities.canExportExcel
+-      ? 'OCR metnini Excel olarak hazırla'
++      ? documentActionCopy.excel.caption
+       : 'Premium ile Excel kaydetmeyi aç';
+@@ -490,7 +495,7 @@ export function DocumentDetailScreen({
+     await handleShareFile({
+       fileUri: documentPdfPath,
+       actionKey: 'share_pdf',
+-      actionLabel: 'PDF paylaş',
++      actionLabel: documentActionCopy.pdf.share,
+       mimeType: 'application/pdf',
+       uti: 'com.adobe.pdf',
+     });
+@@ -505,7 +510,7 @@ export function DocumentDetailScreen({
+     await handleShareFile({
+       fileUri: documentWordPath,
+       actionKey: 'share_word',
+-      actionLabel: 'Word paylaş',
++      actionLabel: documentActionCopy.word.share,
+       mimeType:
+         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+       uti: 'org.openxmlformats.wordprocessingml.document',
+@@ -561,7 +566,7 @@ export function DocumentDetailScreen({
+ 
+     await runAuditedAction({
+       actionKey: 'ocr',
+-      actionLabel: 'OCR çıkar',
++      actionLabel: documentActionCopy.ocr.short,
+       run: () => extractDocumentText(document.id),
+       successMessage: (result) =>
+         `${result.extractedPageCount} sayfadan metin çıkarıldı.`,
+@@ -672,7 +677,7 @@ export function DocumentDetailScreen({
+       await handlePremiumGate({
+         capability: 'export_excel',
+         actionKey: 'excel',
+-        actionLabel: 'Excel dışa aktar',
++        actionLabel: documentActionCopy.excel.create,
+       });
+       return;
+     }
+@@ -680,7 +685,7 @@ export function DocumentDetailScreen({
+     await runAuditedAction({
+       actionKey: 'excel',
+-      actionLabel: 'Excel dışa aktar',
++      actionLabel: documentActionCopy.excel.create,
+       run: () => exportDocumentToExcel(document.id),
+       successMessage: (result) => `${result.fileName} hazır.`,
+       successMetadata: (result) => ({
+@@ -698,7 +703,7 @@ export function DocumentDetailScreen({
+ 
+     await runAuditedAction({
+       actionKey: 'translate',
+-      actionLabel: 'Türkçeye çevir',
++      actionLabel: documentActionCopy.translate.short,
+       run: () => translateDocumentTextToTurkish(document.id),
+       successMessage: () => 'Türkçe çeviri hazır.',
+       successMetadata: (result) => ({
+@@ -747,13 +752,13 @@ export function DocumentDetailScreen({
+   const dockActions = useMemo(
+     () => [
+       {
+         key: 'edit',
+-        label: 'Düzenle',
+-        caption: 'Kaşe, imza ve sayfalar',
++        label: documentActionCopy.edit.short,
++        caption: documentActionCopy.edit.caption,
+         icon: 'create-outline' as const,
+         onPress: handleOpenEditor,
+         disabled: !hasPageBasedDocument || activeActionKey !== null,
+         variant: 'primary' as const,
+       },
+       {
+         key: 'share',
+-        label: 'Paylaş',
+-        caption: documentPdfPath ? 'PDF hazır' : 'Önce PDF',
++        label: documentActionCopy.share.short,
++        caption: documentPdfPath
++          ? documentActionCopy.share.captionReady
++          : documentActionCopy.share.captionNeedsPdf,
+         icon: 'share-social-outline' as const,
+         onPress: () => {
+           void handlePrimaryShare();
+@@ -765,7 +770,7 @@ export function DocumentDetailScreen({
+       },
+       {
+         key: 'word',
+-        label: 'Word',
+-        caption: documentWordPath ? 'Hazır' : 'Dışa aktar',
++        label: documentActionCopy.word.short,
++        caption: documentWordPath ? 'Hazır' : 'Üret',
+         icon: 'document-text-outline' as const,
+         onPress: () => {
+           void handleExportWord();
+@@ -777,8 +782,10 @@ export function DocumentDetailScreen({
+       },
+       {
+         key: 'print',
+-        label: 'Yazdır',
+-        caption: documentPdfPath ? 'Sistem paneli' : 'Önce PDF',
++        label: documentActionCopy.print.short,
++        caption: documentPdfPath
++          ? documentActionCopy.print.captionReady
++          : documentActionCopy.print.captionNeedsPdf,
+         icon: 'print-outline' as const,
+         onPress: () => {
+           void handlePrintSurface();
+@@ -958,8 +965,8 @@ export function DocumentDetailScreen({
+             <View style={styles.actionList}>
+               <ActionButton
+                 icon="scan-outline"
+-                label="OCR çıkar"
+-                caption="Sayfalardaki metni algıla"
++                label={documentActionCopy.ocr.short}
++                caption={documentActionCopy.ocr.caption}
+                 disabled={!hasPageBasedDocument || activeActionKey !== null}
+                 loading={activeActionKey === 'ocr'}
+                 onPress={() => void handleRunOcr()}
+@@ -978,8 +985,8 @@ export function DocumentDetailScreen({
+               />
+               <ActionButton
+                 icon="grid-outline"
+-                label="Excel dışa aktar"
+-                caption={excelActionCaption}
++                label={documentActionCopy.excel.create}
++                caption={excelActionCaption}
+                 disabled={
+                   !hasPageBasedDocument ||
+                   activeActionKey !== null ||
+@@ -991,8 +998,8 @@ export function DocumentDetailScreen({
+               />
+               <ActionButton
+                 icon="language-outline"
+-                label="Türkçeye çevir"
+-                caption="Algılanan metni Türkçeye çevir"
++                label={documentActionCopy.translate.short}
++                caption={documentActionCopy.translate.caption}
+                 disabled={!hasPageBasedDocument || activeActionKey !== null}
+                 loading={activeActionKey === 'translate'}
+                 onPress={() => void handleTranslate()}
+@@ -1034,11 +1041,11 @@ export function DocumentDetailScreen({
+                 actionLabel={
+                   documentPdfPath
+-                    ? 'Paylaş'
++                    ? documentActionCopy.share.short
+                     : billingHydrated
+                       ? capabilities.canExportPdf
+-                        ? 'PDF üret'
++                        ? getPdfActionLabel(false)
+                         : 'Premium'
+                       : null
+                 }
+@@ -1082,11 +1089,11 @@ export function DocumentDetailScreen({
+                 actionLabel={
+                   documentWordPath
+-                    ? 'Paylaş'
++                    ? documentActionCopy.share.short
+                     : billingHydrated
+                       ? capabilities.canExportWord
+-                        ? 'Word üret'
++                        ? getWordActionLabel(false)
+                         : 'Premium'
+                       : null
+                 }
+@@ -1120,7 +1127,9 @@ export function DocumentDetailScreen({
+                 badgeLabel={capabilities.canExportExcel ? 'İsteğe bağlı' : 'Premium gerekli'}
+                 badgeTone={capabilities.canExportExcel ? 'accent' : 'warning'}
+-                actionLabel={billingHydrated ? (capabilities.canExportExcel ? 'Excel üret' : 'Premium') : null}
++                actionLabel={
++                  billingHydrated
++                    ? (capabilities.canExportExcel ? documentActionCopy.excel.create : 'Premium')
++                    : null
++                }
+                 actionDisabled={activeActionKey !== null || !billingHydrated}
+                 actionLoading={activeActionKey === 'excel'}
+                 onPress={() => {
+diff --git a/src/screens/editor/PdfEditorScreen.tsx b/src/screens/editor/PdfEditorScreen.tsx
+index 6564455..d65a3de 100644
+--- a/src/screens/editor/PdfEditorScreen.tsx
++++ b/src/screens/editor/PdfEditorScreen.tsx
+@@ -32,6 +32,7 @@ import {
+ import {
+   getDocumentDetail,
+   type DocumentDetail,
+ } from '../../modules/documents/document.service';
++import { documentActionCopy } from '../../modules/documents/document-action-copy';
+ import { prepareStampAssetImage } from '../../modules/imaging/imaging.service';
+ import {
+   addSignatureAssetOverlay,
+@@ -802,18 +803,18 @@ export function PdfEditorScreen({ route, navigation }: Props) {
+ 
+         <View style={styles.heroActionRow}>
+           <SmallActionButton
+-            title="Kaşe & İmzalar"
++            title={documentActionCopy.editor.assetLibrary}
+             onPress={() => navigation.navigate('StampManager')}
+             disabled={busy}
+           />
+           <SmallActionButton
+-            title="Akıllı sil"
++            title={documentActionCopy.editor.smartErase}
+             onPress={() =>
+               navigation.navigate('SmartErase', {
+                 documentId,
+                 pageId: currentPage.id,
+               })
+             }
+             disabled={busy}
+           />
+           <SmallActionButton
+-            title="Kaydet ve dön"
++            title={documentActionCopy.editor.saveAndBack}
+             onPress={() => navigation.goBack()}
+             disabled={busy}
+             active
+@@ -963,18 +964,18 @@ export function PdfEditorScreen({ route, navigation }: Props) {
+ 
+             <View style={styles.heroActionRow}>
+               <SmallActionButton
+-                title="Önceki sayfa"
++                title={documentActionCopy.editor.previousPage}
+                 onPress={() => handleChangePage(currentPageIndex - 1)}
+                 disabled={busy || currentPageIndex === 0}
+               />
+               <SmallActionButton
+-                title="Sonraki sayfa"
++                title={documentActionCopy.editor.nextPage}
+                 onPress={() => handleChangePage(currentPageIndex + 1)}
+                 disabled={busy || currentPageIndex === document.pages.length - 1}
+               />
+               <SmallActionButton
+-                title="Yeni imza ekle"
++                title={documentActionCopy.editor.newSignature}
+                 onPress={() =>
+                   navigation.navigate('SignaturePad', {
+                     documentId,
+                     pageId: currentPage.id,
+                   })
+                 }
+                 disabled={busy}
+               />

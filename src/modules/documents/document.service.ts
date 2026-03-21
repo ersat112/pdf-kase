@@ -22,7 +22,7 @@ import {
   getDocumentOverlays,
   getOverlaySignatureColor,
 } from '../overlays/overlay.service';
-import { generateImportedPdfThumbnail } from '../pdf/pdf-thumbnail.service';
+import { rasterizePdfToImages } from '../pdf/pdf-render.service';
 import {
   buildPdfFromImages,
   type PdfOverlay,
@@ -37,7 +37,10 @@ import {
   writeExcelBytes,
   writeWordBytes,
 } from '../storage/file.service';
-import { translateTextToTurkish } from '../translation/translation.service';
+import {
+  translateTextToTurkish,
+  type TranslateTextProvider,
+} from '../translation/translation.service';
 
 export type DashboardStats = {
   documents: number;
@@ -124,6 +127,14 @@ export type ImportPickedFilesResult = {
   unsupportedFiles: string[];
 };
 
+type PageInsertSource =
+  | string
+  | {
+      imageUri: string;
+      width?: number | null;
+      height?: number | null;
+    };
+
 export type ExtractDocumentTextResult = {
   documentId: number;
   text: string;
@@ -157,6 +168,7 @@ export type TranslateDocumentTextResult = {
   sourceLanguage: string | null;
   targetLanguage: 'tr';
   translatedAt: string;
+  provider: TranslateTextProvider;
 };
 
 export type MoveDocumentPageDirection = 'up' | 'down';
@@ -188,6 +200,13 @@ type OverlayContent = {
   strokes?: SignatureStroke[];
   strokeColor?: string;
 };
+
+type LegacyDocumentRepairInput = Pick<
+  RawDocumentDetail,
+  'id' | 'pdf_path' | 'created_at'
+>;
+
+const legacyDocumentRepairPromises = new Map<number, Promise<boolean>>();
 
 function isPositiveInteger(value: number) {
   return Number.isInteger(value) && value > 0;
@@ -379,6 +398,10 @@ function getErrorMessage(error: unknown, fallback: string) {
     : fallback;
 }
 
+function hasRecoverablePdfSource(document: Pick<RawDocumentDetail, 'pdf_path'>) {
+  return typeof document.pdf_path === 'string' && document.pdf_path.trim().length > 0;
+}
+
 function getImportDisplayName(input: PickedImportFileInput) {
   return input.name?.trim() || input.uri.trim() || 'dosya';
 }
@@ -467,6 +490,69 @@ async function touchDocument(documentId: number) {
       WHERE id = ?
     `,
     new Date().toISOString(),
+    documentId,
+  );
+}
+
+async function getRawDocumentDetailRow(documentId: number) {
+  const db = await getDb();
+
+  return db.getFirstAsync<RawDocumentDetail>(
+    `
+      SELECT
+        d.id,
+        d.title,
+        d.status,
+        d.pdf_path,
+        d.thumbnail_path,
+        d.ocr_text,
+        COALESCE(d.ocr_status, 'idle') AS ocr_status,
+        d.ocr_updated_at,
+        d.ocr_error,
+        d.word_path,
+        d.word_updated_at,
+        COALESCE(d.is_favorite, 0) AS is_favorite,
+        d.collection_id,
+        c.name AS collection_name,
+        d.created_at,
+        d.updated_at,
+        COALESCE((
+          SELECT GROUP_CONCAT(name, '|||')
+          FROM (
+            SELECT t.name AS name
+            FROM document_tag_links l
+            INNER JOIN document_tags t
+              ON t.id = l.tag_id
+            WHERE l.document_id = d.id
+            ORDER BY t.name COLLATE NOCASE ASC
+          )
+        ), '') AS tag_names_csv
+      FROM documents d
+      LEFT JOIN document_collections c
+        ON c.id = d.collection_id
+      WHERE d.id = ?
+    `,
+    documentId,
+  );
+}
+
+async function getDocumentPages(documentId: number) {
+  const db = await getDb();
+
+  return db.getAllAsync<DocumentPage>(
+    `
+      SELECT
+        id,
+        document_id,
+        image_path,
+        page_order,
+        width,
+        height,
+        created_at
+      FROM document_pages
+      WHERE document_id = ?
+      ORDER BY page_order ASC
+    `,
     documentId,
   );
 }
@@ -613,47 +699,6 @@ async function createDocumentRow(title: string) {
   };
 }
 
-async function createImportedPdfDocumentRow(
-  title: string,
-  pdfPath: string,
-  thumbnailPath: string | null,
-) {
-  const db = await getDb();
-  const now = new Date().toISOString();
-
-  await db.runAsync(
-    `
-      INSERT INTO documents (
-        title,
-        status,
-        pdf_path,
-        thumbnail_path,
-        created_at,
-        updated_at
-      )
-      VALUES (?, 'ready', ?, ?, ?, ?)
-    `,
-    title,
-    pdfPath,
-    thumbnailPath,
-    now,
-    now,
-  );
-
-  const row = await db.getFirstAsync<{ id: number }>(
-    'SELECT last_insert_rowid() AS id',
-  );
-
-  if (!row?.id) {
-    throw new Error('PDF belge kaydı oluşturulamadı.');
-  }
-
-  return {
-    documentId: row.id,
-    createdAt: now,
-  };
-}
-
 async function updateDocumentThumbnail(
   documentId: number,
   thumbnailPath: string | null,
@@ -676,7 +721,7 @@ async function updateDocumentThumbnail(
 
 async function insertPageRows(
   documentId: number,
-  sourceUris: string[],
+  sourceUris: PageInsertSource[],
   createdAt: string,
   startOrder = 0,
 ) {
@@ -685,7 +730,30 @@ async function insertPageRows(
 
   try {
     for (let index = 0; index < sourceUris.length; index += 1) {
-      const persisted = await persistImportedImage(sourceUris[index], 'page');
+      const sourceInput = sourceUris[index];
+      const source =
+        typeof sourceInput === 'string'
+          ? {
+              imageUri: sourceInput,
+              width: null,
+              height: null,
+            }
+          : {
+              imageUri: sourceInput.imageUri,
+              width:
+                typeof sourceInput.width === 'number' &&
+                Number.isFinite(sourceInput.width) &&
+                sourceInput.width > 0
+                  ? sourceInput.width
+                  : null,
+              height:
+                typeof sourceInput.height === 'number' &&
+                Number.isFinite(sourceInput.height) &&
+                sourceInput.height > 0
+                  ? sourceInput.height
+                  : null,
+            };
+      const persisted = await persistImportedImage(source.imageUri, 'page');
       persistedUris.push(persisted.uri);
 
       await db.runAsync(
@@ -698,11 +766,13 @@ async function insertPageRows(
             height,
             created_at
           )
-          VALUES (?, ?, ?, NULL, NULL, ?)
+          VALUES (?, ?, ?, ?, ?, ?)
         `,
         documentId,
         persisted.uri,
         startOrder + index,
+        source.width,
+        source.height,
         createdAt,
       );
     }
@@ -786,45 +856,157 @@ async function createDocumentFromImportedPdf(
 
   sourceFile.copy(destinationFile);
 
-  let thumbnailPath: string | null = null;
+  const title = buildDocumentTitleFromFileName(input.name);
+  let renderedPageUris: string[] = [];
 
   try {
-    const title = buildDocumentTitleFromFileName(input.name);
+    const rasterized = await rasterizePdfToImages({
+      pdfUri: destinationFile.uri,
+      scale: 2,
+      format: 'png',
+    });
+    renderedPageUris = rasterized.pages.map((page) => page.imageUri);
+    const { documentId, createdAt } = await createDocumentRow(title);
 
     try {
-      thumbnailPath = await generateImportedPdfThumbnail({
-        pdfUri: destinationFile.uri,
-        pageNumber: 1,
-        scale: 1.4,
-        prefix: 'pdf-thumb',
-      });
-    } catch (thumbnailError) {
-      console.warn(
-        '[DocumentService] Imported PDF thumbnail generation failed:',
-        thumbnailError,
+      const persistedUris = await insertPageRows(
+        documentId,
+        rasterized.pages.map((page) => ({
+          imageUri: page.imageUri,
+          width: page.width,
+          height: page.height,
+        })),
+        createdAt,
+        0,
       );
-      thumbnailPath = null;
+
+      await updateDocumentThumbnail(documentId, persistedUris[0] ?? null);
+
+      return {
+        documentId,
+        title,
+      };
+    } catch (error) {
+      try {
+        await cleanupDocumentFiles(documentId);
+      } catch (cleanupError) {
+        console.warn('[DocumentService] Imported PDF cleanup failed:', cleanupError);
+      }
+
+      await deleteDocumentRow(documentId);
+      throw error;
+    }
+  } finally {
+    await removeFileIfExists(destinationFile.uri);
+    await Promise.all(renderedPageUris.map((uri) => removeFileIfExists(uri)));
+  }
+}
+
+async function repairLegacyDocumentPagesFromPdf(
+  input: LegacyDocumentRepairInput,
+): Promise<boolean> {
+  if (!isPositiveInteger(input.id) || !hasRecoverablePdfSource(input)) {
+    return false;
+  }
+
+  const pdfPath = input.pdf_path ?? '';
+  const normalizedPdfUri = normalizeImportUri(pdfPath);
+
+  if (!normalizedPdfUri) {
+    return false;
+  }
+
+  await ensureAppDirectories();
+
+  const sourceFile = new File(normalizedPdfUri);
+
+  if (!sourceFile.exists) {
+    return false;
+  }
+
+  let renderedPageUris: string[] = [];
+
+  try {
+    const rasterized = await rasterizePdfToImages({
+      pdfUri: normalizedPdfUri,
+      scale: 2,
+      format: 'png',
+    });
+
+    if (!rasterized.pages.length) {
+      return false;
     }
 
-    const { documentId } = await createImportedPdfDocumentRow(
-      title,
-      destinationFile.uri,
-      thumbnailPath,
+    renderedPageUris = rasterized.pages.map((page) => page.imageUri);
+
+    const db = await getDb();
+    const pageCountRow = await db.getFirstAsync<{ count: number }>(
+      `
+        SELECT COUNT(*) AS count
+        FROM document_pages
+        WHERE document_id = ?
+      `,
+      input.id,
     );
 
-    return {
-      documentId,
-      title,
-    };
-  } catch (error) {
-    await removeFileIfExists(destinationFile.uri);
-
-    if (thumbnailPath) {
-      await removeFileIfExists(thumbnailPath);
+    if ((pageCountRow?.count ?? 0) > 0) {
+      return true;
     }
 
-    throw error;
+    const persistedUris = await insertPageRows(
+      input.id,
+      rasterized.pages.map((page) => ({
+        imageUri: page.imageUri,
+        width: page.width,
+        height: page.height,
+      })),
+      input.created_at,
+      0,
+    );
+
+    await db.runAsync(
+      `
+        UPDATE documents
+        SET thumbnail_path = ?
+        WHERE id = ?
+      `,
+      persistedUris[0] ?? null,
+      input.id,
+    );
+
+    return persistedUris.length > 0;
+  } finally {
+    await Promise.all(renderedPageUris.map((uri) => removeFileIfExists(uri)));
   }
+}
+
+async function ensureLegacyDocumentPages(
+  document: LegacyDocumentRepairInput,
+  pages: DocumentPage[],
+) {
+  if (pages.length > 0 || !hasRecoverablePdfSource(document)) {
+    return false;
+  }
+
+  const existingPromise = legacyDocumentRepairPromises.get(document.id);
+
+  if (existingPromise) {
+    return existingPromise;
+  }
+
+  const repairPromise = (async () => {
+    try {
+      return await repairLegacyDocumentPagesFromPdf(document);
+    } catch (error) {
+      console.warn('[DocumentService] Legacy PDF repair failed:', error);
+      return false;
+    } finally {
+      legacyDocumentRepairPromises.delete(document.id);
+    }
+  })();
+
+  legacyDocumentRepairPromises.set(document.id, repairPromise);
+  return repairPromise;
 }
 
 async function getPageRow(pageId: number) {
@@ -903,9 +1085,7 @@ async function ensureDocumentOcrText(documentId: number) {
   const document = await getDocumentDetail(documentId);
 
   if (!document.pages.length) {
-    throw new Error(
-      'Bu belge dışarıdan PDF olarak içe aktarılmış. OCR için önce sayfa görselleri olan bir belge gerekir.',
-    );
+    throw new Error('OCR için en az bir belge sayfası gerekli.');
   }
 
   if (document.ocr_status === 'ready' && typeof document.ocr_text === 'string') {
@@ -1283,66 +1463,28 @@ export async function getDocumentDetail(
     throw new Error('Geçersiz belge kimliği.');
   }
 
-  const db = await getDb();
-
-  const document = await db.getFirstAsync<RawDocumentDetail>(
-    `
-      SELECT
-        d.id,
-        d.title,
-        d.status,
-        d.pdf_path,
-        d.thumbnail_path,
-        d.ocr_text,
-        COALESCE(d.ocr_status, 'idle') AS ocr_status,
-        d.ocr_updated_at,
-        d.ocr_error,
-        d.word_path,
-        d.word_updated_at,
-        COALESCE(d.is_favorite, 0) AS is_favorite,
-        d.collection_id,
-        c.name AS collection_name,
-        d.created_at,
-        d.updated_at,
-        COALESCE((
-          SELECT GROUP_CONCAT(name, '|||')
-          FROM (
-            SELECT t.name AS name
-            FROM document_tag_links l
-            INNER JOIN document_tags t
-              ON t.id = l.tag_id
-            WHERE l.document_id = d.id
-            ORDER BY t.name COLLATE NOCASE ASC
-          )
-        ), '') AS tag_names_csv
-      FROM documents d
-      LEFT JOIN document_collections c
-        ON c.id = d.collection_id
-      WHERE d.id = ?
-    `,
-    documentId,
-  );
+  let document = await getRawDocumentDetailRow(documentId);
 
   if (!document) {
     throw new Error('Belge bulunamadı.');
   }
 
-  const pages = await db.getAllAsync<DocumentPage>(
-    `
-      SELECT
-        id,
-        document_id,
-        image_path,
-        page_order,
-        width,
-        height,
-        created_at
-      FROM document_pages
-      WHERE document_id = ?
-      ORDER BY page_order ASC
-    `,
-    documentId,
-  );
+  let pages = await getDocumentPages(documentId);
+
+  if (pages.length === 0) {
+    const repaired = await ensureLegacyDocumentPages(document, pages);
+
+    if (repaired) {
+      const refreshedDocument = await getRawDocumentDetailRow(documentId);
+      const refreshedPages = await getDocumentPages(documentId);
+
+      if (refreshedDocument) {
+        document = refreshedDocument;
+      }
+
+      pages = refreshedPages;
+    }
+  }
 
   return mapRawDocumentDetail(document, pages);
 }
@@ -1509,9 +1651,7 @@ export async function mergeDocuments(
   const unsupported = sourceDocuments.find((document) => document.pages.length === 0);
 
   if (unsupported) {
-    throw new Error(
-      'Şu an sadece sayfa tabanlı belgeler birleştirilebilir. Dışarıdan PDF olarak içe aktarılan kayıtlar merge v1 kapsamı dışında.',
-    );
+    throw new Error('Birleştirme için her belgede en az bir sayfa gerekli.');
   }
 
   const sourceUris = sourceDocuments.flatMap((document) =>
@@ -1567,9 +1707,7 @@ export async function extractDocumentText(
   const document = await getDocumentDetail(documentId);
 
   if (!document.pages.length) {
-    throw new Error(
-      'Bu belge dışarıdan PDF olarak içe aktarılmış. OCR için önce sayfa görselleri olan bir belge gerekir.',
-    );
+    throw new Error('OCR için en az bir belge sayfası gerekli.');
   }
 
   const startedAt = new Date().toISOString();
@@ -1770,6 +1908,7 @@ export async function translateDocumentTextToTurkish(
     sourceLanguage: translation.sourceLanguage,
     targetLanguage: translation.targetLanguage,
     translatedAt: translation.translatedAt,
+    provider: translation.provider,
   };
 }
 

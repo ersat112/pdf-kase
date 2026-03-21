@@ -68,6 +68,15 @@ function uniqueName(prefix: string, extension: string) {
   return `${safePrefix}-${Date.now()}-${random}.${extension}`;
 }
 
+function getExtensionFromFileName(fileName: string | null | undefined) {
+  if (typeof fileName !== 'string' || fileName.trim().length === 0) {
+    return null;
+  }
+
+  const match = fileName.trim().match(/\.([a-zA-Z0-9]+)$/);
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
 function sanitizeFileBaseName(value: string) {
   const normalized = replaceTurkishChars(value);
 
@@ -190,6 +199,43 @@ async function persistIntoDirectory(
   };
 }
 
+async function downloadIntoDirectory(
+  sourceUrl: string,
+  targetDirectory: Directory,
+  prefix: string,
+  preferredFileName?: string | null,
+  headers?: Record<string, string>,
+) {
+  if (!sourceUrl?.trim()) {
+    throw new Error('İndirilecek geçerli dosya adresi gerekli.');
+  }
+
+  await ensureAppDirectories();
+
+  const extension =
+    getExtensionFromFileName(preferredFileName) ?? getExtensionFromUri(sourceUrl);
+  const baseName =
+    typeof preferredFileName === 'string' && preferredFileName.trim().length > 0
+      ? preferredFileName.trim().replace(/\.[^.]+$/, '')
+      : prefix;
+  const fileName = uniqueName(baseName || prefix, extension);
+  const destinationFile = new File(targetDirectory, fileName);
+
+  if (destinationFile.exists) {
+    destinationFile.delete();
+  }
+
+  const downloaded = await File.downloadFileAsync(sourceUrl.trim(), destinationFile, {
+    idempotent: true,
+    headers,
+  });
+
+  return {
+    name: fileName,
+    uri: downloaded.uri,
+  };
+}
+
 export async function persistImportedImage(sourceUri: string, prefix = 'scan') {
   return persistIntoDirectory(sourceUri, scansDirectory, prefix);
 }
@@ -200,6 +246,38 @@ export async function persistAssetImage(sourceUri: string, prefix = 'asset') {
 
 export async function persistThumbnailImage(sourceUri: string, prefix = 'thumb') {
   return persistIntoDirectory(sourceUri, thumbsDirectory, prefix);
+}
+
+export async function downloadAssetFile(
+  sourceUrl: string,
+  preferredFileName?: string | null,
+  headers?: Record<string, string>,
+) {
+  return downloadIntoDirectory(sourceUrl, assetsDirectory, 'asset', preferredFileName, headers);
+}
+
+export async function downloadScanFile(
+  sourceUrl: string,
+  preferredFileName?: string | null,
+  headers?: Record<string, string>,
+) {
+  return downloadIntoDirectory(sourceUrl, scansDirectory, 'scan', preferredFileName, headers);
+}
+
+export async function downloadThumbnailFile(
+  sourceUrl: string,
+  preferredFileName?: string | null,
+  headers?: Record<string, string>,
+) {
+  return downloadIntoDirectory(sourceUrl, thumbsDirectory, 'thumb', preferredFileName, headers);
+}
+
+export async function downloadPdfFile(
+  sourceUrl: string,
+  preferredFileName?: string | null,
+  headers?: Record<string, string>,
+) {
+  return downloadIntoDirectory(sourceUrl, pdfDirectory, 'document', preferredFileName, headers);
 }
 
 export async function removeFileIfExists(uri: string | null | undefined) {
@@ -236,5 +314,5 @@ export async function writeWordBytes(fileBaseName: string, bytes: Uint8Array) {
 
 export async function writeExcelBytes(fileBaseName: string, bytes: Uint8Array) {
   await ensureAppDirectories();
-  return writeBytesIntoDirectory(excelsDirectory, fileBaseName, 'xls', bytes);
+  return writeBytesIntoDirectory(excelsDirectory, fileBaseName, 'xlsx', bytes);
 }

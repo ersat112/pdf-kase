@@ -85,6 +85,19 @@ export type UpdateSignatureOverlayStylePayload = {
   opacity?: number;
 };
 
+export type ApplyOverlayToAllPagesPayload = {
+  overlayId: number;
+};
+
+export type ApplyOverlayToAllPagesResult = {
+  overlayId: number;
+  documentId: number;
+  sourcePageId: number;
+  totalTargetPages: number;
+  createdOverlayIds: number[];
+  skippedPageIds: number[];
+};
+
 type OverlayContentShape = {
   assetId?: number;
   strokes?: SignatureStroke[];
@@ -93,6 +106,7 @@ type OverlayContentShape = {
 };
 
 const DEFAULT_SIGNATURE_COLOR = '#111111';
+const OVERLAY_NUMERIC_TOLERANCE = 0.0001;
 
 function isPositiveInteger(value: number) {
   return Number.isInteger(value) && value > 0;
@@ -104,6 +118,10 @@ function clamp01(value: number) {
   }
 
   return Math.max(0, Math.min(1, value));
+}
+
+function nearlyEqual(left: number, right: number, tolerance = OVERLAY_NUMERIC_TOLERANCE) {
+  return Math.abs(left - right) <= tolerance;
 }
 
 function normalizeRotation(value?: number) {
@@ -373,6 +391,78 @@ export async function getOverlayById(overlayId: number) {
   );
 }
 
+async function getDocumentPageIds(documentId: number) {
+  const db = await getDb();
+
+  const rows = await db.getAllAsync<{ id: number }>(
+    `
+      SELECT id
+      FROM document_pages
+      WHERE document_id = ?
+      ORDER BY page_order ASC, id ASC
+    `,
+    documentId,
+  );
+
+  return rows.map((row) => row.id);
+}
+
+async function resolveDuplicableOverlayContent(overlay: DocumentOverlay) {
+  if (overlay.type === 'stamp') {
+    const assetId = getOverlayAssetId(overlay);
+
+    if (!assetId) {
+      throw new Error('Kopyalanacak kaşe bilgisi bulunamadı.');
+    }
+
+    await assertAssetExists(assetId, 'stamp');
+
+    return overlay.content ?? buildStampOverlayContent(assetId);
+  }
+
+  if (overlay.type === 'signature') {
+    const assetId = getOverlayAssetId(overlay);
+
+    if (assetId) {
+      await assertAssetExists(assetId, 'signature');
+      return overlay.content ?? buildSignatureAssetOverlayContent(
+        assetId,
+        getOverlaySignatureColor(overlay),
+      );
+    }
+
+    const strokes = getOverlaySignatureStrokes(overlay);
+
+    if (!strokes.length) {
+      throw new Error('Kopyalanacak geçerli imza verisi bulunamadı.');
+    }
+
+    return overlay.content ?? buildSignatureOverlayContent(
+      strokes,
+      getOverlaySignatureColor(overlay),
+    );
+  }
+
+  throw new Error('Bu öğe türü tüm sayfalara uygulanamıyor.');
+}
+
+function isEquivalentOverlayForBulkApply(
+  existingOverlay: DocumentOverlay,
+  sourceOverlay: DocumentOverlay,
+  sourceContent: string | null,
+) {
+  return (
+    existingOverlay.type === sourceOverlay.type &&
+    (existingOverlay.content ?? null) === sourceContent &&
+    nearlyEqual(existingOverlay.x, sourceOverlay.x) &&
+    nearlyEqual(existingOverlay.y, sourceOverlay.y) &&
+    nearlyEqual(existingOverlay.width, sourceOverlay.width) &&
+    nearlyEqual(existingOverlay.height, sourceOverlay.height) &&
+    nearlyEqual(existingOverlay.rotation, sourceOverlay.rotation) &&
+    nearlyEqual(existingOverlay.opacity, sourceOverlay.opacity)
+  );
+}
+
 export async function addStampOverlay(payload: StampOverlayPayload) {
   if (!isPositiveInteger(payload.documentId)) {
     throw new Error('Geçerli belge bilgisi gerekli.');
@@ -628,6 +718,153 @@ export async function updateOverlayTransform(payload: UpdateOverlayTransformPayl
   return payload.overlayId;
 }
 
+export async function applyOverlayToAllPages(
+  payload: ApplyOverlayToAllPagesPayload,
+): Promise<ApplyOverlayToAllPagesResult> {
+  if (!isPositiveInteger(payload.overlayId)) {
+    throw new Error('Geçerli overlay bilgisi gerekli.');
+  }
+
+  const overlay = await getOverlayById(payload.overlayId);
+
+  if (!overlay) {
+    throw new Error('Overlay bulunamadı.');
+  }
+
+  if (!isPositiveInteger(overlay.page_id ?? 0)) {
+    throw new Error('Tüm sayfalara uygulanacak öğe için sayfa bilgisi eksik.');
+  }
+
+  const sourcePageId = overlay.page_id ?? 0;
+  const sourceContent = await resolveDuplicableOverlayContent(overlay);
+  const allPageIds = await getDocumentPageIds(overlay.document_id);
+  const targetPageIds = allPageIds.filter((pageId) => pageId !== sourcePageId);
+
+  if (!targetPageIds.length) {
+    return {
+      overlayId: overlay.id,
+      documentId: overlay.document_id,
+      sourcePageId,
+      totalTargetPages: 0,
+      createdOverlayIds: [],
+      skippedPageIds: [],
+    };
+  }
+
+  const db = await getDb();
+  const existingOverlays = await db.getAllAsync<DocumentOverlay>(
+    `
+      SELECT
+        id,
+        document_id,
+        page_id,
+        type,
+        x,
+        y,
+        width,
+        height,
+        rotation,
+        opacity,
+        content,
+        created_at
+      FROM overlay_items
+      WHERE document_id = ?
+        AND type = ?
+        AND page_id IS NOT NULL
+      ORDER BY page_id ASC, created_at ASC, id ASC
+    `,
+    overlay.document_id,
+    overlay.type,
+  );
+
+  const createdOverlayIds: number[] = [];
+  const skippedPageIds: number[] = [];
+
+  await db.execAsync('BEGIN IMMEDIATE;');
+
+  try {
+    for (const targetPageId of targetPageIds) {
+      const alreadyExists = existingOverlays.some(
+        (existingOverlay) =>
+          existingOverlay.page_id === targetPageId &&
+          isEquivalentOverlayForBulkApply(existingOverlay, overlay, sourceContent),
+      );
+
+      if (alreadyExists) {
+        skippedPageIds.push(targetPageId);
+        continue;
+      }
+
+      const createdAt = new Date().toISOString();
+
+      await db.runAsync(
+        `
+          INSERT INTO overlay_items (
+            document_id,
+            page_id,
+            type,
+            x,
+            y,
+            width,
+            height,
+            rotation,
+            opacity,
+            content,
+            created_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        overlay.document_id,
+        targetPageId,
+        overlay.type,
+        overlay.x,
+        overlay.y,
+        overlay.width,
+        overlay.height,
+        normalizeRotation(overlay.rotation),
+        clamp01(overlay.opacity),
+        sourceContent,
+        createdAt,
+      );
+
+      const row = await db.getFirstAsync<{ id: number }>(
+        'SELECT last_insert_rowid() AS id',
+      );
+
+      if (!row?.id) {
+        throw new Error('Öğe diğer sayfalara uygulanırken kayıt alınamadı.');
+      }
+
+      createdOverlayIds.push(row.id);
+      existingOverlays.push({
+        ...overlay,
+        id: row.id,
+        page_id: targetPageId,
+        content: sourceContent,
+        created_at: createdAt,
+      });
+    }
+
+    await db.execAsync('COMMIT;');
+  } catch (error) {
+    await db.execAsync('ROLLBACK;');
+    throw error;
+  }
+
+  if (createdOverlayIds.length > 0) {
+    await markDocumentDirty(overlay.document_id);
+  }
+
+  return {
+    overlayId: overlay.id,
+    documentId: overlay.document_id,
+    sourcePageId,
+    totalTargetPages: targetPageIds.length,
+    createdOverlayIds,
+    skippedPageIds,
+  };
+}
+
 export async function updateSignatureOverlayStyle(
   payload: UpdateSignatureOverlayStylePayload,
 ) {
@@ -645,16 +882,26 @@ export async function updateSignatureOverlayStyle(
     throw new Error('Sadece imza overlay renk güncellemesi destekleniyor.');
   }
 
+  const parsed = safeParseOverlayContent(overlay.content);
+  const existingAssetId =
+    typeof parsed?.assetId === 'number' && Number.isFinite(parsed.assetId)
+      ? parsed.assetId
+      : null;
   const existingStrokes = getOverlaySignatureStrokes(overlay);
-
-  if (!existingStrokes.length) {
-    throw new Error('Güncellenecek geçerli imza verisi bulunamadı.');
-  }
-
   const currentOpacity = clamp01(payload.opacity ?? overlay.opacity);
   const nextColor = normalizeSignatureColor(
     payload.strokeColor ?? getOverlaySignatureColor(overlay),
   );
+
+  let nextContent: string;
+
+  if (existingAssetId) {
+    nextContent = buildSignatureAssetOverlayContent(existingAssetId, nextColor);
+  } else if (existingStrokes.length) {
+    nextContent = buildSignatureOverlayContent(existingStrokes, nextColor);
+  } else {
+    throw new Error('Güncellenecek geçerli imza verisi bulunamadı.');
+  }
 
   const db = await getDb();
 
@@ -666,7 +913,7 @@ export async function updateSignatureOverlayStyle(
         opacity = ?
       WHERE id = ?
     `,
-    buildSignatureOverlayContent(existingStrokes, nextColor),
+    nextContent,
     currentOpacity,
     payload.overlayId,
   );

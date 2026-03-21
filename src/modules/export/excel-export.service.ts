@@ -1,3 +1,5 @@
+import ExcelJS from 'exceljs';
+
 export type BuildExcelDocumentInput = {
   title: string;
   text: string;
@@ -32,88 +34,83 @@ function formatDate(value?: string | null) {
   return parsed.toLocaleString('tr-TR');
 }
 
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function buildHtmlWorkbook(input: BuildExcelDocumentInput) {
+function buildSummaryWorksheet(
+  workbook: ExcelJS.Workbook,
+  input: BuildExcelDocumentInput,
+) {
+  const sheet = workbook.addWorksheet('Belge Ozeti');
   const title = input.title.trim() || 'Belge';
-  const normalizedText = normalizeText(input.text);
   const generatedAt = input.generatedAt ?? new Date().toISOString();
 
-  const ocrTextHtml = normalizedText
-    ? escapeHtml(normalizedText).replace(/\n/g, '<br/>')
-    : 'Bu belgede OCR ile çıkarılabilir metin bulunamadı.';
+  sheet.columns = [
+    { header: 'Alan', key: 'label', width: 24 },
+    { header: 'Değer', key: 'value', width: 52 },
+  ];
 
-  return `<!DOCTYPE html>
-<html xmlns:o="urn:schemas-microsoft-com:office:office"
-      xmlns:x="urn:schemas-microsoft-com:office:excel"
-      xmlns="http://www.w3.org/TR/REC-html40">
-<head>
-  <meta charset="utf-8" />
-  <meta http-equiv="Content-Type" content="application/vnd.ms-excel; charset=utf-8" />
-  <title>${escapeHtml(title)}</title>
-  <style>
-    body { font-family: Arial, Helvetica, sans-serif; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td {
-      border: 1px solid #C9D2DD;
-      padding: 8px;
-      vertical-align: top;
-      text-align: left;
-    }
-    th {
-      background: #EEF3F8;
-      font-weight: 700;
-    }
-    .section-title {
-      font-size: 16px;
-      font-weight: 700;
-      margin: 16px 0 8px;
-    }
-    .text-cell {
-      white-space: normal;
-    }
-  </style>
-</head>
-<body>
-  <div class="section-title">Belge Özeti</div>
-  <table>
-    <tr>
-      <th>Belge Adı</th>
-      <th>Sayfa Sayısı</th>
-      <th>OCR Güncellenme</th>
-      <th>Excel Oluşturulma</th>
-    </tr>
-    <tr>
-      <td>${escapeHtml(title)}</td>
-      <td>${Math.max(0, Math.trunc(input.pageCount || 0))}</td>
-      <td>${escapeHtml(formatDate(input.ocrUpdatedAt))}</td>
-      <td>${escapeHtml(formatDate(generatedAt))}</td>
-    </tr>
-  </table>
+  sheet.addRows([
+    { label: 'Belge Adı', value: title },
+    { label: 'Sayfa Sayısı', value: Math.max(0, Math.trunc(input.pageCount || 0)) },
+    { label: 'OCR Güncellenme', value: formatDate(input.ocrUpdatedAt) },
+    { label: 'Excel Oluşturulma', value: formatDate(generatedAt) },
+  ]);
 
-  <div class="section-title">OCR Metni</div>
-  <table>
-    <tr>
-      <th>Metin</th>
-    </tr>
-    <tr>
-      <td class="text-cell">${ocrTextHtml}</td>
-    </tr>
-  </table>
-</body>
-</html>`;
+  sheet.getRow(1).font = {
+    bold: true,
+  };
+}
+
+function buildOcrWorksheet(
+  workbook: ExcelJS.Workbook,
+  input: BuildExcelDocumentInput,
+) {
+  const sheet = workbook.addWorksheet('OCR Metni');
+  const normalizedText = normalizeText(input.text);
+  const blocks = normalizedText
+    ? normalizedText
+        .split(/\n{2,}/)
+        .map((block) => block.trim())
+        .filter((block) => block.length > 0)
+    : [];
+
+  sheet.columns = [
+    { header: 'Parça No', key: 'index', width: 12 },
+    { header: 'OCR Metni', key: 'text', width: 120 },
+  ];
+
+  const rows = blocks.length
+    ? blocks.map((block, index) => ({
+        index: index + 1,
+        text: block,
+      }))
+    : [
+        {
+          index: 1,
+          text: 'Bu belgede OCR ile çıkarılabilir metin bulunamadı.',
+        },
+      ];
+
+  sheet.addRows(rows);
+  sheet.getRow(1).font = {
+    bold: true,
+  };
+
+  sheet.getColumn('text').alignment = {
+    vertical: 'top',
+    wrapText: true,
+  };
 }
 
 export async function buildExcelDocumentBytes(
   input: BuildExcelDocumentInput,
 ): Promise<Uint8Array> {
-  const workbookHtml = buildHtmlWorkbook(input);
-  return new TextEncoder().encode(workbookHtml);
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'PDF Kaşe';
+  workbook.title = input.title.trim() || 'Belge';
+  workbook.created = new Date();
+
+  buildSummaryWorksheet(workbook, input);
+  buildOcrWorksheet(workbook, input);
+
+  const output = await workbook.xlsx.writeBuffer();
+  return new Uint8Array(output);
 }

@@ -5,8 +5,10 @@ import {
   removeFileIfExists,
   removeFilesIfExist,
 } from '../storage/file.service';
+import { enqueueWorkspaceSyncTombstone } from '../workspace/workspace-sync-tombstone.service';
 
 export type AssetType = 'stamp' | 'signature';
+export type AssetLibraryScope = 'personal' | 'workspace';
 
 export type AssetMetadata = Record<string, unknown>;
 
@@ -17,6 +19,8 @@ export type StoredAsset = {
   file_path: string;
   original_file_path: string | null;
   preview_file_path: string | null;
+  library_scope: AssetLibraryScope;
+  workspace_name: string | null;
   metadata: string | null;
   created_at: string;
 };
@@ -31,6 +35,10 @@ export type UpdateAssetImageInput = {
 
 type OverlayAssetRef = {
   assetId?: number;
+};
+
+export type GetAssetsByTypeOptions = {
+  scope?: AssetLibraryScope | 'all';
 };
 
 function isPositiveInteger(value: number) {
@@ -78,6 +86,25 @@ function serializeAssetMetadata(metadata: AssetMetadata) {
 
 function buildAssetFilePrefix(type: AssetType) {
   return type === 'stamp' ? 'stamp' : 'signature';
+}
+
+export function normalizeAssetLibraryScope(
+  value: string | null | undefined,
+): AssetLibraryScope {
+  return value === 'workspace' ? 'workspace' : 'personal';
+}
+
+function normalizeWorkspaceName(value: string | null | undefined) {
+  const normalized = value?.trim() ?? '';
+  return normalized.length > 0 ? normalized : null;
+}
+
+export function getAssetLibraryScopeLabel(
+  asset: Pick<StoredAsset, 'library_scope' | 'workspace_name'>,
+) {
+  return asset.library_scope === 'workspace'
+    ? normalizeWorkspaceName(asset.workspace_name) ?? 'Kurumsal'
+    : 'Kişisel';
 }
 
 function getUniqueFilePaths(paths: Array<string | null | undefined>) {
@@ -156,6 +183,8 @@ export async function createAssetFromImage(input: {
   metadata?: AssetMetadata;
   originalSourceUri?: string;
   previewSourceUri?: string | null;
+  libraryScope?: AssetLibraryScope;
+  workspaceName?: string | null;
 }) {
   const sourceUri = input.sourceUri?.trim();
 
@@ -166,6 +195,18 @@ export async function createAssetFromImage(input: {
   const db = await getDb();
   const now = new Date().toISOString();
   const assetName = input.name?.trim() || buildDefaultAssetName(input.type);
+  const libraryScope =
+    input.type === 'signature'
+      ? 'personal'
+      : normalizeAssetLibraryScope(input.libraryScope);
+  const workspaceName =
+    libraryScope === 'workspace'
+      ? normalizeWorkspaceName(input.workspaceName)
+      : null;
+
+  if (libraryScope === 'workspace' && !workspaceName) {
+    throw new Error('Kurumsal kütüphane için şirket bilgisi gerekli.');
+  }
 
   const persistedMain = await persistAssetImage(
     sourceUri,
@@ -188,6 +229,8 @@ export async function createAssetFromImage(input: {
 
   const metadata = serializeAssetMetadata({
     ...input.metadata,
+    libraryScope,
+    workspaceName,
     createdAt: now,
     updatedAt: now,
   });
@@ -201,16 +244,20 @@ export async function createAssetFromImage(input: {
           file_path,
           original_file_path,
           preview_file_path,
+          library_scope,
+          workspace_name,
           metadata,
           created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       input.type,
       assetName,
       persistedMain.uri,
       persistedOriginal.uri,
       persistedPreview.uri,
+      libraryScope,
+      workspaceName,
       metadata,
       now,
     );
@@ -230,6 +277,8 @@ export async function createAssetFromImage(input: {
       file_path: persistedMain.uri,
       original_file_path: persistedOriginal.uri,
       preview_file_path: persistedPreview.uri,
+      library_scope: libraryScope,
+      workspace_name: workspaceName,
       metadata,
       created_at: now,
     } satisfies StoredAsset;
@@ -245,8 +294,17 @@ export async function createAssetFromImage(input: {
   }
 }
 
-export async function getAssetsByType(type: AssetType) {
+export async function getAssetsByType(
+  type: AssetType,
+  options?: GetAssetsByTypeOptions,
+) {
   const db = await getDb();
+  const scope =
+    type === 'signature'
+      ? 'personal'
+      : options?.scope === 'personal' || options?.scope === 'workspace'
+        ? options.scope
+        : 'all';
 
   return db.getAllAsync<StoredAsset>(
     `
@@ -257,13 +315,25 @@ export async function getAssetsByType(type: AssetType) {
         file_path,
         original_file_path,
         preview_file_path,
+        CASE
+          WHEN library_scope = 'workspace' THEN 'workspace'
+          ELSE 'personal'
+        END AS library_scope,
+        workspace_name,
         metadata,
         created_at
       FROM assets
-      WHERE type = ?
-      ORDER BY created_at DESC, id DESC
+      WHERE
+        type = ?
+        AND (? = 'all' OR library_scope = ?)
+      ORDER BY
+        CASE WHEN library_scope = 'workspace' THEN 0 ELSE 1 END,
+        created_at DESC,
+        id DESC
     `,
     type,
+    scope,
+    scope,
   );
 }
 
@@ -283,6 +353,11 @@ export async function getAssetById(assetId: number) {
         file_path,
         original_file_path,
         preview_file_path,
+        CASE
+          WHEN library_scope = 'workspace' THEN 'workspace'
+          ELSE 'personal'
+        END AS library_scope,
+        workspace_name,
         metadata,
         created_at
       FROM assets
@@ -336,6 +411,64 @@ export async function renameAsset(assetId: number, nextName: string) {
     ...asset,
     name,
   } satisfies StoredAsset;
+}
+
+export async function updateAssetLibraryScope(input: {
+  assetId: number;
+  libraryScope: AssetLibraryScope;
+  workspaceName?: string | null;
+}) {
+  if (!isPositiveInteger(input.assetId)) {
+    throw new Error('Geçerli asset bilgisi gerekli.');
+  }
+
+  const asset = await getAssetById(input.assetId);
+
+  if (!asset) {
+    throw new Error('Asset bulunamadı.');
+  }
+
+  const libraryScope =
+    asset.type === 'signature'
+      ? 'personal'
+      : normalizeAssetLibraryScope(input.libraryScope);
+  const workspaceName =
+    libraryScope === 'workspace'
+      ? normalizeWorkspaceName(input.workspaceName ?? asset.workspace_name)
+      : null;
+
+  if (libraryScope === 'workspace' && !workspaceName) {
+    throw new Error('Kurumsal kütüphane için şirket bilgisi gerekli.');
+  }
+
+  const nextMetadata = withUpdatedMetadata(asset.metadata, undefined, {
+    libraryScope,
+    workspaceName,
+  });
+  const db = await getDb();
+
+  await db.runAsync(
+    `
+      UPDATE assets
+      SET
+        library_scope = ?,
+        workspace_name = ?,
+        metadata = ?
+      WHERE id = ?
+    `,
+    libraryScope,
+    workspaceName,
+    nextMetadata,
+    input.assetId,
+  );
+
+  const updated = await getAssetById(input.assetId);
+
+  if (!updated) {
+    throw new Error('Asset kütüphane güncellendikten sonra okunamadı.');
+  }
+
+  return updated;
 }
 
 export async function updateAssetImage(input: UpdateAssetImageInput) {
@@ -510,6 +643,16 @@ export async function deleteAsset(assetId: number) {
     `,
     assetId,
   );
+
+  await enqueueWorkspaceSyncTombstone({
+    entityType: 'asset',
+    entityId: String(asset.id),
+    scope: asset.library_scope,
+    entityName: asset.name,
+    entitySubtype: asset.type,
+    workspaceName: asset.workspace_name,
+    deletedAt: new Date().toISOString(),
+  });
 
   await removeFilesIfExist(
     getUniqueFilePaths([

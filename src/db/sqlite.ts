@@ -1,7 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 
 const DB_NAME = 'pdf_kase.db';
-const DB_VERSION = 8;
+const DB_VERSION = 9;
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -251,6 +251,33 @@ async function migrateToVersion8(db: SQLite.SQLiteDatabase) {
   `);
 }
 
+async function migrateToVersion9(db: SQLite.SQLiteDatabase) {
+  await ensureColumn(
+    db,
+    'assets',
+    'library_scope',
+    "TEXT NOT NULL DEFAULT 'personal'",
+  );
+  await ensureColumn(db, 'assets', 'workspace_name', 'TEXT');
+
+  await db.execAsync(`
+    UPDATE assets
+    SET library_scope = 'personal'
+    WHERE library_scope IS NULL OR TRIM(library_scope) = '';
+
+    CREATE TABLE IF NOT EXISTS workspace_profiles (
+      id INTEGER PRIMARY KEY NOT NULL,
+      company_name TEXT NOT NULL,
+      branch_name TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_assets_type_scope_created_at
+      ON assets(type, library_scope, created_at DESC);
+  `);
+}
+
 async function runMigrations(db: SQLite.SQLiteDatabase) {
   await applyBasePragmas(db);
 
@@ -289,6 +316,10 @@ async function runMigrations(db: SQLite.SQLiteDatabase) {
 
   if (currentVersion < 8) {
     await migrateToVersion8(db);
+  }
+
+  if (currentVersion < 9) {
+    await migrateToVersion9(db);
   }
 
   if (currentVersion !== DB_VERSION) {

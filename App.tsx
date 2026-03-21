@@ -16,6 +16,10 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { initializeDatabase } from './src/db/sqlite';
 import { useAdGate } from './src/hooks/useAdGate';
+import {
+  captureObservabilityError,
+  trackObservabilityEvent,
+} from './src/modules/observability/observability.service';
 import { ensureAppDirectories } from './src/modules/storage/file.service';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import {
@@ -60,6 +64,11 @@ export default function App() {
     const run = async () => {
       try {
         await bootstrapApplication();
+        void trackObservabilityEvent({
+          feature: 'app_boot',
+          name: 'bootstrap_completed',
+          source: 'app_root',
+        });
 
         if (!active) {
           return;
@@ -70,6 +79,13 @@ export default function App() {
           error: null,
         });
       } catch (error) {
+        void captureObservabilityError({
+          feature: 'app_boot',
+          name: 'bootstrap_failed',
+          source: 'app_root',
+          error,
+        });
+
         if (!active) {
           return;
         }

@@ -285,3 +285,81 @@ export async function addTagToDocuments(
     updatedAt: now,
   };
 }
+
+export async function syncDocumentTaxonomy(
+  documentId: number,
+  input: {
+    collectionName?: string | null;
+    tagNames?: string[];
+    updatedAt?: string | null;
+  },
+) {
+  if (!isPositiveInteger(documentId)) {
+    throw new Error('Geçersiz belge kimliği.');
+  }
+
+  const db = await getDb();
+  const updatedAt =
+    typeof input.updatedAt === 'string' && input.updatedAt.trim().length > 0
+      ? input.updatedAt.trim()
+      : new Date().toISOString();
+  const collectionName =
+    typeof input.collectionName === 'string' && input.collectionName.trim().length > 0
+      ? normalizeName(input.collectionName, 'Klasör adı')
+      : null;
+  const tagNames = Array.from(
+    new Set(
+      (input.tagNames ?? [])
+        .filter((tagName): tagName is string => typeof tagName === 'string')
+        .map((tagName) => normalizeName(tagName, 'Etiket adı')),
+    ),
+  );
+  const collectionId = collectionName ? await getOrCreateCollectionId(collectionName) : null;
+
+  await db.runAsync(
+    `
+      UPDATE documents
+      SET
+        collection_id = ?,
+        updated_at = ?
+      WHERE id = ?
+    `,
+    collectionId,
+    updatedAt,
+    documentId,
+  );
+
+  await db.runAsync(
+    `
+      DELETE FROM document_tag_links
+      WHERE document_id = ?
+    `,
+    documentId,
+  );
+
+  for (const tagName of tagNames) {
+    const tagId = await getOrCreateTagId(tagName);
+
+    await db.runAsync(
+      `
+        INSERT OR IGNORE INTO document_tag_links (
+          document_id,
+          tag_id,
+          created_at
+        )
+        VALUES (?, ?, ?)
+      `,
+      documentId,
+      tagId,
+      updatedAt,
+    );
+  }
+
+  return {
+    documentId,
+    collectionId,
+    collectionName,
+    tagNames,
+    updatedAt,
+  };
+}

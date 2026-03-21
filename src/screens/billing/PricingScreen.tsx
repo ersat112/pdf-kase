@@ -1,4 +1,5 @@
 // src/screens/billing/PricingScreen.tsx
+import { Ionicons } from '@expo/vector-icons';
 import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -11,11 +12,16 @@ import {
 } from 'react-native';
 
 import { Screen } from '../../components/common/Screen';
+import { appRuntime, isPreviewRuntime } from '../../config/runtime';
 import {
   BILLING_COMPARE_ROWS,
   getBillingPlanLabel,
   resolveBillingCapabilities,
 } from '../../modules/billing/billing-capabilities';
+import {
+  getBillingRuntimeLabel,
+  isMockBillingState,
+} from '../../modules/billing/billing.service';
 import { useBillingStore } from '../../store/useBillingStore';
 import { Radius, Spacing, Typography, colors } from '../../theme';
 
@@ -94,11 +100,42 @@ function CompareValue({
   );
 }
 
+function InfoPill({
+  label,
+  tone = 'default',
+}: {
+  label: string;
+  tone?: 'default' | 'accent' | 'success' | 'warning';
+}) {
+  return (
+    <View
+      style={[
+        styles.infoPill,
+        tone === 'accent' && styles.infoPillAccent,
+        tone === 'success' && styles.infoPillSuccess,
+        tone === 'warning' && styles.infoPillWarning,
+      ]}
+    >
+      <Text
+        style={[
+          styles.infoPillText,
+          tone === 'accent' && styles.infoPillTextAccent,
+          tone === 'success' && styles.infoPillTextSuccess,
+          tone === 'warning' && styles.infoPillTextWarning,
+        ]}
+      >
+        {label}
+      </Text>
+    </View>
+  );
+}
+
 export function PricingScreen() {
   const hydrated = useBillingStore((state) => state.hydrated);
   const isPro = useBillingStore((state) => state.isPro);
   const plan = useBillingStore((state) => state.plan);
   const expiresAt = useBillingStore((state) => state.expiresAt);
+  const metadata = useBillingStore((state) => state.metadata);
   const activateMockPlan = useBillingStore((state) => state.activateMockPlan);
   const restoreMockPurchase = useBillingStore((state) => state.restoreMockPurchase);
   const resetToFree = useBillingStore((state) => state.resetToFree);
@@ -115,6 +152,17 @@ export function PricingScreen() {
     [expiresAt, isPro, plan],
   );
 
+  const isMockMode = useMemo(
+    () =>
+      isMockBillingState({
+        isPro,
+        plan,
+        expiresAt,
+        metadata,
+      }),
+    [expiresAt, isPro, metadata, plan],
+  );
+
   const planSummary = useMemo(
     () => ({
       premiumLabel: isPro ? 'Açık' : 'Kapalı',
@@ -122,11 +170,19 @@ export function PricingScreen() {
       expiryLabel: formatExpiry(expiresAt),
       saveLabel: capabilities.canSave ? 'Açık' : 'Kapalı',
       adsLabel: capabilities.canRemoveAds ? 'Kapalı' : 'Açık',
+      runtimeLabel: getBillingRuntimeLabel({
+        isPro,
+        plan,
+        expiresAt,
+        metadata,
+      }),
     }),
-    [capabilities.canRemoveAds, capabilities.canSave, expiresAt, isPro, plan],
+    [capabilities.canRemoveAds, capabilities.canSave, expiresAt, isPro, metadata, plan],
   );
 
   const isBusy = busyAction !== null;
+  const previewBillingActive =
+    isPreviewRuntime() || appRuntime.billingProvider === 'preview_local';
 
   const handleChoosePlan = async (nextPlan: PaidPlan) => {
     try {
@@ -134,8 +190,8 @@ export function PricingScreen() {
       await activateMockPlan(nextPlan);
 
       Alert.alert(
-        'Premium aktif',
-        `Mock premium plan aktif edildi: ${getBillingPlanLabel(nextPlan)}`,
+        'Onizleme premium aktif',
+        `Onizleme premium plani aktif edildi: ${getBillingPlanLabel(nextPlan)}`,
       );
     } catch (error) {
       const message =
@@ -153,7 +209,7 @@ export function PricingScreen() {
     try {
       setBusyAction('restore');
       await restoreMockPurchase();
-      Alert.alert('Tamamlandı', 'Mock satın alım durumu geri yüklendi.');
+      Alert.alert('Tamamlandı', 'Onizleme satin alim durumu geri yuklendi.');
     } catch (error) {
       const message =
         error instanceof Error
@@ -207,15 +263,46 @@ export function PricingScreen() {
           <Text style={styles.heroEyebrow}>PDF Kaşe Premium</Text>
           <Text style={styles.heroTitle}>Kaydetme ve paylaşma kilidini aç</Text>
           <Text style={styles.heroText}>
-            Free kullanıcı tüm araçları kullanabilir. Premium ile PDF / Word / Excel
-            kaydetme, paylaşma ve reklamsız kullanım açılır.
+            {previewBillingActive
+              ? 'Bu ekran su an onizleme premium katmani ile calisiyor. Amac export, paylasim ve reklamsiz kullanim akislarini gercek urun kabugunda dogrulamak.'
+              : 'Bu ekran premium planlari ve odeme akislarini yonetmek icin hazirlandi.'}
           </Text>
+
+          <View style={styles.heroPillRow}>
+            <InfoPill
+              label={previewBillingActive ? 'Onizleme modu' : 'Canli premium'}
+              tone="accent"
+            />
+            <InfoPill
+              label={isMockMode ? 'Onizleme premium' : 'Premium'}
+              tone="warning"
+            />
+            <InfoPill label={isPro ? 'Plan aktif' : 'Free plan'} tone={isPro ? 'success' : 'default'} />
+          </View>
+        </View>
+
+        <View style={styles.mockNoticeCard}>
+          <View style={styles.mockNoticeIconWrap}>
+            <Ionicons name="flask-outline" size={18} color="#FBBF24" />
+          </View>
+
+          <View style={styles.mockNoticeTextWrap}>
+            <Text style={styles.mockNoticeTitle}>
+              {previewBillingActive ? 'Onizleme modu aktif' : 'Premium durumu'}
+            </Text>
+            <Text style={styles.mockNoticeText}>
+              {previewBillingActive
+                ? 'Buradaki plan secimleri gercek faturalandirma yapmaz. Onizleme premium state cihaz icinde saklanir ve urun akislarini dogrulamak icin kullanilir.'
+                : 'Buradan premium durumunu ve plan ozetini takip edebilirsin.'}
+            </Text>
+          </View>
         </View>
 
         <View style={styles.statusCard}>
           <Text style={styles.sectionTitle}>Mevcut durum</Text>
           <Text style={styles.statusLine}>Premium: {planSummary.premiumLabel}</Text>
           <Text style={styles.statusLine}>Plan: {planSummary.planLabel}</Text>
+          <Text style={styles.statusLine}>Runtime: {planSummary.runtimeLabel}</Text>
           <Text style={styles.statusLine}>Kaydetme / export: {planSummary.saveLabel}</Text>
           <Text style={styles.statusLine}>Reklamlar: {planSummary.adsLabel}</Text>
           <Text style={styles.statusLine}>Bitiş: {planSummary.expiryLabel}</Text>
@@ -250,9 +337,9 @@ export function PricingScreen() {
         <View style={styles.planList}>
           <PlanCard
             title="Aylık"
-            subtitle="Hızlı başlamak isteyenler için reklamsız ve sınırsız kayıt."
+            subtitle="Kisa sureli premium akislarini dogrulamak icin."
             price="₺99 / ay"
-            badge="En hızlı"
+            badge={previewBillingActive ? 'Onizleme' : 'Canli'}
             active={plan === 'monthly'}
             disabled={isBusy || plan === 'monthly'}
             onPress={() => handleChoosePlan('monthly')}
@@ -260,9 +347,9 @@ export function PricingScreen() {
 
           <PlanCard
             title="Yıllık"
-            subtitle="Daha düşük maliyetle tam premium kullanım."
+            subtitle="Export, paylasim ve reklamsiz kullanim akislarini uzun plan gibi denemek icin."
             price="₺699 / yıl"
-            badge="En avantajlı"
+            badge={previewBillingActive ? 'Onizleme' : 'Canli'}
             active={plan === 'yearly'}
             disabled={isBusy || plan === 'yearly'}
             onPress={() => handleChoosePlan('yearly')}
@@ -270,9 +357,9 @@ export function PricingScreen() {
 
           <PlanCard
             title="Ömür boyu"
-            subtitle="Tek ödeme ile kalıcı premium erişim."
+            subtitle="Kalici premium akislarini uzun omurlu plan gibi denemek icin."
             price="₺1499 tek sefer"
-            badge="Kalıcı"
+            badge={previewBillingActive ? 'Onizleme' : 'Canli'}
             active={plan === 'lifetime'}
             disabled={isBusy || plan === 'lifetime'}
             onPress={() => handleChoosePlan('lifetime')}
@@ -290,7 +377,7 @@ export function PricingScreen() {
             ]}
           >
             <Text style={styles.secondaryActionText}>
-              Mock satın alımı geri yükle
+              Onizleme premium durumunu geri yukle
             </Text>
           </Pressable>
 
@@ -353,6 +440,75 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: colors.textSecondary,
     lineHeight: 22,
+  },
+  heroPillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+    marginTop: Spacing.xs,
+  },
+  infoPill: {
+    minHeight: 30,
+    borderRadius: Radius.full,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+  },
+  infoPillAccent: {
+    borderColor: 'rgba(59, 130, 246, 0.28)',
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+  },
+  infoPillSuccess: {
+    borderColor: 'rgba(53, 199, 111, 0.28)',
+    backgroundColor: 'rgba(53, 199, 111, 0.12)',
+  },
+  infoPillWarning: {
+    borderColor: 'rgba(245, 158, 11, 0.24)',
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+  },
+  infoPillText: {
+    ...Typography.caption,
+    color: colors.textSecondary,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  infoPillTextAccent: {
+    color: '#60A5FA',
+  },
+  infoPillTextSuccess: {
+    color: colors.primary,
+  },
+  infoPillTextWarning: {
+    color: '#FBBF24',
+  },
+  mockNoticeCard: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.22)',
+    backgroundColor: 'rgba(245, 158, 11, 0.08)',
+    padding: Spacing.lg,
+  },
+  mockNoticeIconWrap: {
+    width: 34,
+    alignItems: 'center',
+    paddingTop: 2,
+  },
+  mockNoticeTextWrap: {
+    flex: 1,
+    gap: 4,
+  },
+  mockNoticeTitle: {
+    ...Typography.titleSmall,
+    color: colors.text,
+  },
+  mockNoticeText: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
   },
   statusCard: {
     backgroundColor: colors.card,

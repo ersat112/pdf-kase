@@ -1,37 +1,32 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import {
-    Canvas,
-    Path,
-    Skia,
-    useCanvasRef,
-} from '@shopify/react-native-skia';
+import { Canvas, Path, Skia, useCanvasRef } from '@shopify/react-native-skia';
 import { File, Paths } from 'expo-file-system';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    Alert,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    View,
-    type LayoutChangeEvent,
+  Alert,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type LayoutChangeEvent,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { createAssetFromImage } from '../../modules/assets/asset.service';
 import {
-    addSignatureOverlay,
-    type SignatureStroke,
+  addSignatureAssetOverlay,
+  type SignatureStroke,
 } from '../../modules/overlays/overlay.service';
+import { createTrimmedSignatureImage } from '../../modules/signatures/signature-image';
 import { removeFileIfExists } from '../../modules/storage/file.service';
 import type { RootStackParamList } from '../../navigation/types';
 import {
-    Radius,
-    Shadows,
-    Spacing,
-    Typography,
-    colors,
+  Radius,
+  Shadows,
+  Spacing,
+  Typography,
+  colors,
 } from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SignaturePad'>;
@@ -39,6 +34,12 @@ type Props = NativeStackScreenProps<RootStackParamList, 'SignaturePad'>;
 type SignaturePoint = {
   x: number;
   y: number;
+};
+
+type StrokeWidthPreset = {
+  key: 'fine' | 'medium' | 'bold';
+  label: string;
+  value: number;
 };
 
 const DEFAULT_SIGNATURE_FRAME = {
@@ -50,25 +51,10 @@ const DEFAULT_SIGNATURE_FRAME = {
 
 const DEFAULT_SIGNATURE_COLOR = '#111111';
 
-const SIGNATURE_COLORS = [
-  '#111111',
-  '#1F2937',
-  '#374151',
-  '#4B5563',
-  '#1D4ED8',
-  '#2563EB',
-  '#0F766E',
-  '#0D9488',
-  '#7C3AED',
-  '#9333EA',
-  '#B45309',
-  '#D97706',
-  '#B91C1C',
-  '#DC2626',
-  '#166534',
-  '#15803D',
-  '#0F172A',
-  '#334155',
+const STROKE_WIDTH_PRESETS: StrokeWidthPreset[] = [
+  { key: 'fine', label: 'İnce', value: 2.5 },
+  { key: 'medium', label: 'Orta', value: 4 },
+  { key: 'bold', label: 'Kalın', value: 5.5 },
 ];
 
 function clampUnit(value: number) {
@@ -204,53 +190,78 @@ function ActionButton({
   onPress,
   disabled,
   primary,
+  danger,
 }: {
   title: string;
   onPress: () => void;
   disabled?: boolean;
   primary?: boolean;
+  danger?: boolean;
 }) {
   return (
     <Pressable
-      disabled={disabled}
       onPress={onPress}
+      disabled={disabled}
       style={({ pressed }) => [
-        primary ? styles.primaryButton : styles.secondaryButton,
+        styles.actionButton,
+        primary && styles.actionButtonPrimary,
+        danger && styles.actionButtonDanger,
         disabled && styles.buttonDisabled,
         pressed && !disabled && styles.pressed,
       ]}
     >
-      <Text style={primary ? styles.primaryButtonText : styles.secondaryButtonText}>
+      <Text
+        style={[
+          styles.actionButtonText,
+          primary && styles.actionButtonTextPrimary,
+          danger && styles.actionButtonTextDanger,
+        ]}
+      >
         {title}
       </Text>
     </Pressable>
   );
 }
 
-function ColorSwatch({
-  color,
+function WidthPresetChip({
+  label,
   selected,
   onPress,
   disabled,
 }: {
-  color: string;
+  label: string;
   selected: boolean;
   onPress: () => void;
   disabled?: boolean;
 }) {
   return (
     <Pressable
-      disabled={disabled}
       onPress={onPress}
+      disabled={disabled}
       style={({ pressed }) => [
-        styles.colorSwatchOuter,
-        selected && styles.colorSwatchOuterSelected,
+        styles.widthChip,
+        selected && styles.widthChipSelected,
         disabled && styles.buttonDisabled,
         pressed && !disabled && styles.pressed,
       ]}
     >
-      <View style={[styles.colorSwatchInner, { backgroundColor: color }]} />
+      <Text
+        style={[
+          styles.widthChipText,
+          selected && styles.widthChipTextSelected,
+        ]}
+      >
+        {label}
+      </Text>
     </Pressable>
+  );
+}
+
+function MetaBadge({ value }: { value: string }) {
+  return (
+    <View style={styles.metaBadge}>
+      <Text style={styles.metaBadgeText}>{value}</Text>
+    </View>
   );
 }
 
@@ -261,13 +272,17 @@ export function SignaturePadScreen({ route, navigation }: Props) {
   const [padWidth, setPadWidth] = useState(0);
   const [padHeight, setPadHeight] = useState(0);
   const [strokes, setStrokes] = useState<SignatureStroke[]>([]);
-  const [selectedColor, setSelectedColor] = useState(DEFAULT_SIGNATURE_COLOR);
+  const [selectedStrokeWidth, setSelectedStrokeWidth] = useState(
+    STROKE_WIDTH_PRESETS[1].value,
+  );
 
   const drawingRef = useRef(false);
   const canvasRef = useCanvasRef();
 
   useEffect(() => {
-    void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+    void ScreenOrientation.lockAsync(
+      ScreenOrientation.OrientationLock.LANDSCAPE,
+    );
 
     return () => {
       drawingRef.current = false;
@@ -290,6 +305,20 @@ export function SignaturePadScreen({ route, navigation }: Props) {
     [strokes],
   );
 
+  const strokeCount = useMemo(
+    () => normalizeSignatureStrokes(strokes).length,
+    [strokes],
+  );
+
+  const pointCount = useMemo(
+    () =>
+      normalizeSignatureStrokes(strokes).reduce(
+        (sum, stroke) => sum + stroke.length,
+        0,
+      ),
+    [strokes],
+  );
+
   const appendPoint = useCallback(
     (x: number, y: number, startNewStroke: boolean) => {
       if (padWidth <= 0 || padHeight <= 0) {
@@ -301,7 +330,10 @@ export function SignaturePadScreen({ route, navigation }: Props) {
         y: clampUnit(y / padHeight),
       };
 
-      const minDistance = Math.max(0.0012, 1.5 / Math.max(padWidth, padHeight));
+      const minDistance = Math.max(
+        0.0012,
+        1.5 / Math.max(padWidth, padHeight),
+      );
       const minDistanceSquared = minDistance * minDistance;
 
       setStrokes((current) => {
@@ -333,7 +365,11 @@ export function SignaturePadScreen({ route, navigation }: Props) {
     setPadHeight(height);
   }, []);
 
-  const createSignatureAssetSnapshot = useCallback(async () => {
+  const handleUndo = useCallback(() => {
+    setStrokes((current) => current.slice(0, -1));
+  }, []);
+
+  const createSignatureSnapshot = useCallback(async () => {
     const snapshot = await canvasRef.current?.makeImageSnapshotAsync();
 
     if (!snapshot) {
@@ -341,7 +377,7 @@ export function SignaturePadScreen({ route, navigation }: Props) {
     }
 
     const bytes = snapshot.encodeToBytes();
-    const fileName = `signature-preview-${Date.now()}.png`;
+    const fileName = `signature-pad-${Date.now()}.png`;
     const tempFile = new File(Paths.cache, fileName);
 
     if (tempFile.exists) {
@@ -354,6 +390,14 @@ export function SignaturePadScreen({ route, navigation }: Props) {
     return tempFile.uri;
   }, [canvasRef]);
 
+  const cleanupTempUris = useCallback(async (uris: Array<string | null>) => {
+    const uniqueUris = [...new Set(uris.filter(Boolean))] as string[];
+
+    for (const uri of uniqueUris) {
+      await removeFileIfExists(uri);
+    }
+  }, []);
+
   const handleSave = useCallback(async () => {
     const normalized = smoothSignatureStrokes(strokes);
 
@@ -362,72 +406,106 @@ export function SignaturePadScreen({ route, navigation }: Props) {
       return;
     }
 
-    let tempSignatureUri: string | null = null;
+    let snapshotUri: string | null = null;
+    let trimmedSourceUri: string | null = null;
+    let trimmedPreviewUri: string | null = null;
 
     try {
       setBusy(true);
 
-      tempSignatureUri = await createSignatureAssetSnapshot();
+      snapshotUri = await createSignatureSnapshot();
 
-      await createAssetFromImage({
-        sourceUri: tempSignatureUri,
-        originalSourceUri: tempSignatureUri,
-        previewSourceUri: tempSignatureUri,
+      const trimmed = await createTrimmedSignatureImage({
+        snapshotUri,
+        strokes: normalized,
+        padWidth,
+        padHeight,
+        strokeWidth: selectedStrokeWidth,
+      });
+
+      trimmedSourceUri = trimmed.sourceUri;
+      trimmedPreviewUri = trimmed.previewSourceUri;
+
+      const createdAsset = await createAssetFromImage({
+        sourceUri: trimmed.sourceUri,
+        originalSourceUri: trimmed.sourceUri,
+        previewSourceUri: trimmed.previewSourceUri,
         type: 'signature',
         metadata: {
-          strokeColor: selectedColor,
-          pointCount: normalized.reduce((sum, stroke) => sum + stroke.length, 0),
+          strokeColor: DEFAULT_SIGNATURE_COLOR,
           strokeCount: normalized.length,
-          source: 'signature-pad',
+          pointCount: normalized.reduce((sum, stroke) => sum + stroke.length, 0),
+          strokeWidth: selectedStrokeWidth,
+          ...trimmed.metadata,
         },
       });
 
-      await addSignatureOverlay({
+      await addSignatureAssetOverlay({
         documentId,
         pageId,
+        assetId: createdAsset.id,
         x: DEFAULT_SIGNATURE_FRAME.x,
         y: DEFAULT_SIGNATURE_FRAME.y,
         width: DEFAULT_SIGNATURE_FRAME.width,
         height: DEFAULT_SIGNATURE_FRAME.height,
         opacity: 1,
-        strokes: normalized,
-        strokeColor: selectedColor,
+        strokeColor: DEFAULT_SIGNATURE_COLOR,
       });
 
       navigation.replace('PdfEditor', { documentId });
     } catch (error) {
       Alert.alert('Hata', getErrorMessage(error, 'İmza kaydedilemedi.'));
     } finally {
-      if (tempSignatureUri) {
-        await removeFileIfExists(tempSignatureUri);
-      }
+      await cleanupTempUris([snapshotUri, trimmedSourceUri, trimmedPreviewUri]);
       setBusy(false);
     }
   }, [
-    createSignatureAssetSnapshot,
+    cleanupTempUris,
+    createSignatureSnapshot,
     documentId,
     navigation,
+    padHeight,
+    padWidth,
     pageId,
-    selectedColor,
+    selectedStrokeWidth,
     strokes,
   ]);
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right', 'bottom']}>
+    <SafeAreaView
+      style={styles.safeArea}
+      edges={['top', 'left', 'right', 'bottom']}
+    >
       <View style={styles.container}>
-        <View style={styles.headerRow}>
-          <View style={styles.headerTextBlock}>
+        <View style={styles.heroCard}>
+          <View style={styles.heroTextBlock}>
+            <Text style={styles.heroEyebrow}>İmza oturumu</Text>
             <Text style={styles.title}>İmza Oluştur</Text>
             <Text style={styles.subtitle}>
-              Ekran yatay kilitli. Geniş alanda imzanı at, rengi seç ve kaydet.
+              Burada siyah imza oluştur. Editöre döndüğünde yerleştirilen imzanın
+              rengini, konumunu ve boyutunu değiştirebilirsin.
             </Text>
+
+            <View style={styles.metaRow}>
+              <MetaBadge value={`${strokeCount} çizgi`} />
+              <MetaBadge value={`${pointCount} nokta`} />
+              <MetaBadge
+                value={`${selectedStrokeWidth.toFixed(1).replace('.', ',')} px`}
+              />
+            </View>
           </View>
 
-          <View style={styles.headerActions}>
+          <View style={styles.heroActionRail}>
+            <ActionButton
+              title="Son çizgiyi geri al"
+              onPress={handleUndo}
+              disabled={busy || strokes.length === 0}
+            />
             <ActionButton
               title="Temizle"
               onPress={() => setStrokes([])}
-              disabled={busy}
+              disabled={busy || strokes.length === 0}
+              danger
             />
             <ActionButton
               title="Vazgeç"
@@ -435,7 +513,7 @@ export function SignaturePadScreen({ route, navigation }: Props) {
               disabled={busy}
             />
             <ActionButton
-              title={busy ? 'Kaydediliyor...' : 'Kaydet'}
+              title="Kaydet ve editöre dön"
               onPress={() => {
                 void handleSave();
               }}
@@ -445,82 +523,97 @@ export function SignaturePadScreen({ route, navigation }: Props) {
           </View>
         </View>
 
-        <View style={styles.paletteSection}>
-          <Text style={styles.paletteLabel}>Renk</Text>
+        <View style={styles.mainRow}>
+          <View style={styles.padCard}>
+            <View style={styles.padHeader}>
+              <Text style={styles.cardTitle}>İmza alanı</Text>
+              <Text style={styles.cardHint}>
+                Beyaz pad sabit yüzeydir. Kayıt sırasında çizim gerçek sınırlarına göre
+                kırpılır ve kütüphaneye thumbnail olarak kaydedilir.
+              </Text>
+            </View>
 
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.paletteRow}
-          >
-            {SIGNATURE_COLORS.map((color) => (
-              <ColorSwatch
-                key={color}
-                color={color}
-                selected={selectedColor === color}
-                onPress={() => setSelectedColor(color)}
-                disabled={busy}
-              />
-            ))}
-          </ScrollView>
-        </View>
+            <View style={styles.padSurface}>
+              <View
+                style={styles.signaturePad}
+                onLayout={handlePadLayout}
+                onStartShouldSetResponder={() => true}
+                onMoveShouldSetResponder={() => true}
+                onResponderGrant={(event) => {
+                  drawingRef.current = true;
+                  appendPoint(
+                    event.nativeEvent.locationX,
+                    event.nativeEvent.locationY,
+                    true,
+                  );
+                }}
+                onResponderMove={(event) => {
+                  if (!drawingRef.current) {
+                    return;
+                  }
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Geniş imza alanı</Text>
-          <Text style={styles.cardHint}>
-            Parmağınla veya kalemle imzanı at. Kaydedince hem belgeye eklenir hem de
-            İmzalarım bölümünde küçük resim olarak görünür.
-          </Text>
+                  appendPoint(
+                    event.nativeEvent.locationX,
+                    event.nativeEvent.locationY,
+                    false,
+                  );
+                }}
+                onResponderRelease={() => {
+                  drawingRef.current = false;
+                }}
+                onResponderTerminate={() => {
+                  drawingRef.current = false;
+                }}
+              >
+                <Canvas ref={canvasRef} style={StyleSheet.absoluteFill}>
+                  <Path
+                    path={signaturePath}
+                    color={DEFAULT_SIGNATURE_COLOR}
+                    style="stroke"
+                    strokeWidth={selectedStrokeWidth}
+                    strokeCap="round"
+                    strokeJoin="round"
+                  />
+                </Canvas>
 
-          <View
-            onLayout={handlePadLayout}
-            style={styles.signaturePad}
-            onStartShouldSetResponder={() => true}
-            onMoveShouldSetResponder={() => true}
-            onResponderGrant={(event) => {
-              drawingRef.current = true;
-              appendPoint(
-                event.nativeEvent.locationX,
-                event.nativeEvent.locationY,
-                true,
-              );
-            }}
-            onResponderMove={(event) => {
-              if (!drawingRef.current) {
-                return;
-              }
+                <View pointerEvents="none" style={styles.baseline} />
 
-              appendPoint(
-                event.nativeEvent.locationX,
-                event.nativeEvent.locationY,
-                false,
-              );
-            }}
-            onResponderRelease={() => {
-              drawingRef.current = false;
-            }}
-            onResponderTerminate={() => {
-              drawingRef.current = false;
-            }}
-          >
-            <Canvas ref={canvasRef} style={StyleSheet.absoluteFill}>
-              <Path
-                path={signaturePath}
-                style="stroke"
-                color={selectedColor}
-                strokeWidth={3}
-                strokeCap="round"
-                strokeJoin="round"
-              />
-            </Canvas>
-
-            {!canSave ? (
-              <View pointerEvents="none" style={styles.placeholderWrap}>
-                <Text style={styles.placeholderText}>Buraya imza at</Text>
+                {!canSave ? (
+                  <View pointerEvents="none" style={styles.placeholderWrap}>
+                    <Text style={styles.placeholderText}>Buraya imza at</Text>
+                  </View>
+                ) : null}
               </View>
-            ) : null}
+            </View>
+          </View>
 
-            <View pointerEvents="none" style={styles.baseline} />
+          <View style={styles.sidePanel}>
+            <View style={styles.controlsCard}>
+              <Text style={styles.sidePanelTitle}>Kalem kalınlığı</Text>
+              <Text style={styles.sidePanelText}>
+                Farklı imza stilleri için çizgi kalınlığını burada ayarla.
+              </Text>
+
+              <View style={styles.widthRow}>
+                {STROKE_WIDTH_PRESETS.map((preset) => (
+                  <WidthPresetChip
+                    key={preset.key}
+                    label={preset.label}
+                    selected={selectedStrokeWidth === preset.value}
+                    onPress={() => setSelectedStrokeWidth(preset.value)}
+                    disabled={busy}
+                  />
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.tipCard}>
+              <Text style={styles.sidePanelTitle}>Akış notu</Text>
+              <Text style={styles.sidePanelText}>
+                Kaydettiğin imza otomatik olarak belgeye yerleştirilir ve editöre dönersin.
+                Sonraki adım orada sürükle, hizala, renk değiştir ve boyutlandır olur.
+              </Text>
+            </View>
           </View>
         </View>
       </View>
@@ -540,15 +633,26 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.lg,
     gap: Spacing.lg,
   },
-  headerRow: {
+  heroCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: Radius.xl,
+    padding: Spacing.lg,
     flexDirection: 'row',
     alignItems: 'flex-start',
-    justifyContent: 'space-between',
     gap: Spacing.lg,
+    ...Shadows.sm,
   },
-  headerTextBlock: {
+  heroTextBlock: {
     flex: 1,
-    gap: Spacing.xs,
+    gap: Spacing.sm,
+  },
+  heroEyebrow: {
+    ...Typography.caption,
+    color: colors.primary,
+    fontWeight: '800',
+    textTransform: 'uppercase',
   },
   title: {
     ...Typography.display,
@@ -560,70 +664,73 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: colors.textSecondary,
   },
-  headerActions: {
-    width: 210,
+  metaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: Spacing.sm,
+    marginTop: Spacing.xs,
   },
-  paletteSection: {
-    gap: Spacing.sm,
+  metaBadge: {
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: Radius.full,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
-  paletteLabel: {
+  metaBadgeText: {
     ...Typography.bodySmall,
     color: colors.textSecondary,
     fontWeight: '700',
   },
-  paletteRow: {
+  heroActionRail: {
+    width: 240,
     gap: Spacing.sm,
-    paddingRight: Spacing.lg,
   },
-  colorSwatchOuter: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  colorSwatchOuterSelected: {
-    borderWidth: 2,
-    borderColor: colors.primary,
-    transform: [{ scale: 1.06 }],
-  },
-  colorSwatchInner: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-  },
-  card: {
+  mainRow: {
     flex: 1,
+    flexDirection: 'row',
+    gap: Spacing.lg,
+  },
+  padCard: {
+    flex: 1,
+    minHeight: 360,
     backgroundColor: colors.card,
     borderColor: colors.border,
     borderWidth: 1,
     borderRadius: Radius.xl,
     padding: Spacing.lg,
+    gap: Spacing.md,
     ...Shadows.sm,
+  },
+  padHeader: {
+    gap: 4,
   },
   cardTitle: {
     ...Typography.titleLarge,
     color: colors.text,
-    marginBottom: Spacing.xs,
   },
   cardHint: {
     ...Typography.bodySmall,
     color: colors.textSecondary,
     lineHeight: 20,
-    marginBottom: Spacing.lg,
+  },
+  padSurface: {
+    flex: 1,
+    minHeight: 300,
+    borderRadius: Radius.xl,
+    backgroundColor: '#EEF2F7',
+    padding: 12,
   },
   signaturePad: {
     flex: 1,
-    minHeight: 260,
+    minHeight: 280,
     borderRadius: Radius.xl,
     backgroundColor: '#FFFFFF',
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#E7E9EE',
+    borderColor: '#DCE3EC',
+    position: 'relative',
   },
   placeholderWrap: {
     ...StyleSheet.absoluteFillObject,
@@ -644,31 +751,93 @@ const styles = StyleSheet.create({
     borderBottomColor: '#D8DDE6',
     borderStyle: 'dashed',
   },
-  secondaryButton: {
-    backgroundColor: colors.surfaceElevated,
+  sidePanel: {
+    width: 292,
+    gap: Spacing.lg,
+  },
+  controlsCard: {
+    backgroundColor: colors.card,
     borderColor: colors.border,
     borderWidth: 1,
     borderRadius: Radius.xl,
-    paddingVertical: 14,
+    padding: Spacing.lg,
+    gap: Spacing.md,
+    ...Shadows.sm,
+  },
+  tipCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: Radius.xl,
+    padding: Spacing.lg,
+    gap: Spacing.sm,
+    ...Shadows.sm,
+  },
+  sidePanelTitle: {
+    ...Typography.titleSmall,
+    color: colors.text,
+  },
+  sidePanelText: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
+  },
+  widthRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+  },
+  widthChip: {
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: Radius.full,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  widthChipSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryMuted,
+  },
+  widthChipText: {
+    ...Typography.bodySmall,
+    color: colors.text,
+    fontWeight: '700',
+  },
+  widthChipTextSelected: {
+    color: colors.primary,
+  },
+  actionButton: {
+    minHeight: 46,
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: 18,
   },
-  secondaryButtonText: {
+  actionButtonPrimary: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  actionButtonDanger: {
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    borderColor: 'rgba(239, 68, 68, 0.24)',
+  },
+  actionButtonText: {
     color: colors.text,
     textAlign: 'center',
     fontWeight: '700',
     fontSize: 15,
   },
-  primaryButton: {
-    backgroundColor: colors.primary,
-    borderRadius: Radius.xl,
-    paddingVertical: 14,
-    paddingHorizontal: 18,
-  },
-  primaryButtonText: {
+  actionButtonTextPrimary: {
     color: colors.onPrimary,
-    textAlign: 'center',
     fontWeight: '800',
-    fontSize: 15,
+  },
+  actionButtonTextDanger: {
+    color: '#F87171',
+    fontWeight: '800',
   },
   buttonDisabled: {
     opacity: 0.55,

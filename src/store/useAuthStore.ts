@@ -2,12 +2,18 @@
 import { create } from 'zustand';
 
 import {
-    clearStoredSession,
-    createLocalSession,
-    getStoredSession,
-    setStoredSession,
-    type AuthSession,
+  hydrateAuthSession,
+  loginWithPassword,
+  logoutCurrentSession,
+  refreshStoredSessionWorkspaceContext,
+  registerWithPassword,
+  switchStoredSessionWorkspace,
+  type AuthSession,
 } from '../modules/auth/auth.service';
+import {
+  captureObservabilityError,
+  trackObservabilityEvent,
+} from '../modules/observability/observability.service';
 
 export type AuthStatus = 'booting' | 'guest' | 'authenticated';
 
@@ -31,6 +37,8 @@ type AuthStore = {
   login: (input: LoginInput) => Promise<void>;
   register: (input: RegisterInput) => Promise<void>;
   logout: () => Promise<void>;
+  refreshWorkspaceContext: () => Promise<void>;
+  switchWorkspace: (workspaceId: string) => Promise<void>;
   clearError: () => void;
 };
 
@@ -52,10 +60,7 @@ function validateStrongPassword(password: string) {
 }
 
 function normalizeName(name: string) {
-  return name
-    .trim()
-    .replace(/\s+/g, ' ')
-    .slice(0, 120);
+  return name.trim().replace(/\s+/g, ' ').slice(0, 120);
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -64,7 +69,7 @@ function getErrorMessage(error: unknown, fallback: string) {
     : fallback;
 }
 
-export const useAuthStore = create<AuthStore>((set) => ({
+export const useAuthStore = create<AuthStore>((set, get) => ({
   status: 'booting',
   session: null,
   error: null,
@@ -73,9 +78,18 @@ export const useAuthStore = create<AuthStore>((set) => ({
     try {
       set({ status: 'booting', error: null });
 
-      const session = await getStoredSession();
+      const session = await hydrateAuthSession();
 
       if (session) {
+        void trackObservabilityEvent({
+          feature: 'auth',
+          name: 'session_hydrated',
+          source: 'auth_store',
+          metadata: {
+            workspaceCount: session.workspaces.length,
+            activeWorkspaceId: session.activeWorkspaceId,
+          },
+        });
         set({
           status: 'authenticated',
           session,
@@ -91,6 +105,12 @@ export const useAuthStore = create<AuthStore>((set) => ({
       });
     } catch (error) {
       console.warn('[AuthStore] Hydration failed:', error);
+      void captureObservabilityError({
+        feature: 'auth',
+        name: 'session_hydration_failed',
+        source: 'auth_store',
+        error,
+      });
 
       set({
         status: 'guest',
@@ -114,12 +134,20 @@ export const useAuthStore = create<AuthStore>((set) => ({
         throw new Error('Şifre en az 6 karakter olmalı.');
       }
 
-      const session = await createLocalSession({
+      const session = await loginWithPassword({
         email: normalizedEmail,
         password,
       });
 
-      await setStoredSession(session);
+      void trackObservabilityEvent({
+        feature: 'auth',
+        name: 'login_succeeded',
+        source: 'auth_store',
+        metadata: {
+          workspaceCount: session.workspaces.length,
+          activeWorkspaceId: session.activeWorkspaceId,
+        },
+      });
 
       set({
         status: 'authenticated',
@@ -132,6 +160,12 @@ export const useAuthStore = create<AuthStore>((set) => ({
         'Giriş yapılırken beklenmeyen bir hata oluştu.',
       );
 
+      void captureObservabilityError({
+        feature: 'auth',
+        name: 'login_failed',
+        source: 'auth_store',
+        error,
+      });
       set({ error: message });
       throw new Error(message);
     }
@@ -162,13 +196,21 @@ export const useAuthStore = create<AuthStore>((set) => ({
         throw new Error('Şifreler aynı değil.');
       }
 
-      const session = await createLocalSession({
+      const session = await registerWithPassword({
         name: normalizedName,
         email: normalizedEmail,
         password,
       });
 
-      await setStoredSession(session);
+      void trackObservabilityEvent({
+        feature: 'auth',
+        name: 'register_succeeded',
+        source: 'auth_store',
+        metadata: {
+          workspaceCount: session.workspaces.length,
+          activeWorkspaceId: session.activeWorkspaceId,
+        },
+      });
 
       set({
         status: 'authenticated',
@@ -181,17 +223,33 @@ export const useAuthStore = create<AuthStore>((set) => ({
         'Kayıt oluşturulurken beklenmeyen bir hata oluştu.',
       );
 
+      void captureObservabilityError({
+        feature: 'auth',
+        name: 'register_failed',
+        source: 'auth_store',
+        error,
+      });
       set({ error: message });
       throw new Error(message);
     }
   },
 
-  logout: async () => {
-    try {
-      await clearStoredSession();
+    logout: async () => {
+      try {
+        const previousSession = get().session;
+        await logoutCurrentSession(get().session);
 
-      set({
-        status: 'guest',
+        void trackObservabilityEvent({
+          feature: 'auth',
+          name: 'logout_succeeded',
+          source: 'auth_store',
+          metadata: {
+            activeWorkspaceId: previousSession?.activeWorkspaceId ?? null,
+          },
+        });
+
+        set({
+          status: 'guest',
         session: null,
         error: null,
       });
@@ -201,6 +259,111 @@ export const useAuthStore = create<AuthStore>((set) => ({
         'Çıkış yapılırken beklenmeyen bir hata oluştu.',
       );
 
+      void captureObservabilityError({
+        feature: 'auth',
+        name: 'logout_failed',
+        source: 'auth_store',
+        error,
+      });
+      set({ error: message });
+      throw new Error(message);
+    }
+  },
+
+  refreshWorkspaceContext: async () => {
+    try {
+      const currentSession = get().session;
+
+      if (!currentSession) {
+        return;
+      }
+
+      const nextSession = await refreshStoredSessionWorkspaceContext(currentSession);
+
+      if (!nextSession) {
+        set({
+          status: 'guest',
+          session: null,
+          error: null,
+        });
+        return;
+      }
+
+      void trackObservabilityEvent({
+        feature: 'auth',
+        name: 'workspace_context_refreshed',
+        source: 'auth_store',
+        metadata: {
+          workspaceCount: nextSession.workspaces.length,
+          activeWorkspaceId: nextSession.activeWorkspaceId,
+        },
+      });
+
+      set({
+        status: 'authenticated',
+        session: nextSession,
+        error: null,
+      });
+    } catch (error) {
+      const message = getErrorMessage(
+        error,
+        'Çalışma alanı bilgisi güncellenirken beklenmeyen bir hata oluştu.',
+      );
+
+      void captureObservabilityError({
+        feature: 'auth',
+        name: 'workspace_context_refresh_failed',
+        source: 'auth_store',
+        error,
+      });
+      set({ error: message });
+      throw new Error(message);
+    }
+  },
+
+  switchWorkspace: async (workspaceId: string) => {
+    try {
+      const currentSession = get().session;
+
+      if (!currentSession) {
+        throw new Error('Önce oturum açmalısın.');
+      }
+
+      const nextSession = await switchStoredSessionWorkspace({
+        session: currentSession,
+        workspaceId,
+      });
+
+      void trackObservabilityEvent({
+        feature: 'auth',
+        name: 'workspace_switched',
+        source: 'auth_store',
+        metadata: {
+          workspaceId,
+          workspaceCount: nextSession.workspaces.length,
+        },
+      });
+
+      set({
+        status: 'authenticated',
+        session: nextSession,
+        error: null,
+      });
+    } catch (error) {
+      const message = getErrorMessage(
+        error,
+        'Çalışma alanı değiştirilirken beklenmeyen bir hata oluştu.',
+      );
+
+      void captureObservabilityError({
+        feature: 'auth',
+        name: 'workspace_switch_failed',
+        source: 'auth_store',
+        error,
+        metadata: {
+          workspaceId,
+        },
+      });
       set({ error: message });
       throw new Error(message);
     }

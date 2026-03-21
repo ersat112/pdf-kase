@@ -1,24 +1,34 @@
 // src/screens/account/MeScreen.tsx
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import {
-    Alert,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    View,
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
 
+import {
+  getAuthActiveWorkspace,
+  getAuthWorkspaceRoleLabel,
+  getAuthWorkspaceSummaryLabel,
+} from '../../modules/auth/auth.service';
 import type { AppTabScreenProps } from '../../navigation/types';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useBillingStore } from '../../store/useBillingStore';
+import { useWorkspaceSyncStore } from '../../store/useWorkspaceSyncStore';
 import {
-    Layout,
-    Radius,
-    Shadows,
-    Spacing,
-    Typography,
-    colors,
+  getWorkspaceSyncModeLabel,
+  getWorkspaceSyncPendingLabel,
+} from '../../modules/workspace/workspace-sync.service';
+import {
+  Layout,
+  Radius,
+  Shadows,
+  Spacing,
+  Typography,
+  colors,
 } from '../../theme';
 
 type Props = AppTabScreenProps<'MeTab'>;
@@ -48,10 +58,42 @@ function MenuRow({ title, subtitle, onPress }: MenuItem) {
 export function MeScreen({ navigation }: Props) {
   const session = useAuthStore((state) => state.session);
   const isPro = useBillingStore((state) => state.isPro);
+  const syncSnapshot = useWorkspaceSyncStore((state) => state.snapshot);
+  const syncHydrated = useWorkspaceSyncStore((state) => state.hydrated);
+  const hydrateSync = useWorkspaceSyncStore((state) => state.hydrate);
+  const refreshSync = useWorkspaceSyncStore((state) => state.refresh);
 
   const handleNotReady = (title: string) => {
     Alert.alert('Hazır UI', `${title} akışı sonraki sprintte bağlanacak.`);
   };
+
+  useEffect(() => {
+    void hydrateSync(session);
+  }, [hydrateSync, session]);
+
+  useEffect(() => {
+    if (!syncHydrated) {
+      return;
+    }
+
+    void refreshSync(session).catch((error) => {
+      console.warn('[MeScreen] Failed to refresh sync snapshot:', error);
+    });
+  }, [
+    refreshSync,
+    session,
+    session?.activeWorkspaceId,
+    session?.metadata?.updatedAt,
+    syncHydrated,
+  ]);
+
+  const syncSummary = useMemo(() => {
+    if (!syncSnapshot) {
+      return 'Bulut hazırlığı yükleniyor';
+    }
+
+    return `${getWorkspaceSyncModeLabel(syncSnapshot.mode)} • ${getWorkspaceSyncPendingLabel(syncSnapshot)}`;
+  }, [syncSnapshot]);
 
   const menu = useMemo<MenuItem[]>(
     () => [
@@ -62,8 +104,8 @@ export function MeScreen({ navigation }: Props) {
       },
       {
         title: 'Eşitle',
-        subtitle: 'Bulut senkronizasyon hazırlığı',
-        onPress: () => handleNotReady('Eşitle'),
+        subtitle: syncSummary,
+        onPress: () => navigation.navigate('Settings'),
       },
       {
         title: 'Tara',
@@ -101,11 +143,14 @@ export function MeScreen({ navigation }: Props) {
         onPress: () => handleNotReady('Arkadaşlarınıza söyleyin'),
       },
     ],
-    [navigation],
+    [navigation, syncSummary],
   );
 
   const displayName = session?.user?.name?.trim() || 'Kullanıcı';
   const displayEmail = session?.user?.email?.trim() || 'E-posta yok';
+  const activeWorkspace = getAuthActiveWorkspace(session);
+  const workspaceLabel = getAuthWorkspaceSummaryLabel(session);
+  const workspaceRoleLabel = getAuthWorkspaceRoleLabel(activeWorkspace?.role);
 
   return (
     <View style={styles.container}>
@@ -117,10 +162,16 @@ export function MeScreen({ navigation }: Props) {
           <Text style={styles.eyebrow}>BEN</Text>
           <Text style={styles.profileName}>{displayName}</Text>
           <Text style={styles.profileEmail}>{displayEmail}</Text>
+          <Text style={styles.profileWorkspace}>{workspaceLabel}</Text>
+          <Text style={styles.profileSync}>{syncSummary}</Text>
 
           <View style={styles.profileMetaRow}>
             <View style={styles.metaPill}>
               <Text style={styles.metaPillText}>{isPro ? 'Premium' : 'Free'}</Text>
+            </View>
+
+            <View style={styles.metaPill}>
+              <Text style={styles.metaPillText}>{workspaceRoleLabel}</Text>
             </View>
 
             <Pressable
@@ -185,6 +236,15 @@ const styles = StyleSheet.create({
   profileEmail: {
     ...Typography.body,
     color: colors.textSecondary,
+  },
+  profileWorkspace: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+  },
+  profileSync: {
+    ...Typography.bodySmall,
+    color: colors.primary,
+    fontWeight: '700',
   },
   profileMetaRow: {
     marginTop: Spacing.sm,

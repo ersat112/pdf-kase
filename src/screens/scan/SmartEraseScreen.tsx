@@ -1,37 +1,37 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Image,
-    Pressable,
-    StyleSheet,
-    Text,
-    View,
-    type GestureResponderEvent,
-    type LayoutChangeEvent,
-    type ViewStyle,
+  ActivityIndicator,
+  Alert,
+  Image,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type GestureResponderEvent,
+  type LayoutChangeEvent,
+  type ViewStyle,
 } from 'react-native';
 
 import { Screen } from '../../components/common/Screen';
 import {
-    getDocumentDetail,
-    replaceDocumentPageFromScan,
-    type DocumentDetail,
+  getDocumentDetail,
+  replaceDocumentPageFromScan,
+  type DocumentDetail,
 } from '../../modules/documents/document.service';
 import {
-    applySmartEraseToImage,
-    getImageSize,
-    type EraseStroke,
+  applySmartEraseToImage,
+  getImageSize,
+  type EraseStroke,
 } from '../../modules/imaging/imaging.service';
 import { removeFileIfExists } from '../../modules/storage/file.service';
 import type { RootStackParamList } from '../../navigation/types';
 import {
-    Radius,
-    Shadows,
-    Spacing,
-    Typography,
-    colors,
+  Radius,
+  Shadows,
+  Spacing,
+  Typography,
+  colors,
 } from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SmartErase'>;
@@ -60,6 +60,10 @@ const BRUSH_SIZE_RATIO: Record<BrushPreset, number> = {
   medium: 0.02,
   large: 0.032,
 };
+
+const MASK_FILL_COLOR = 'rgba(53, 199, 111, 0.32)';
+const MASK_BORDER_COLOR = 'rgba(53, 199, 111, 0.68)';
+const MASK_CENTER_COLOR = 'rgba(53, 199, 111, 0.92)';
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message.trim().length > 0
@@ -130,9 +134,9 @@ function segmentStyle(
     width: length,
     height: thickness,
     borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.88)',
+    backgroundColor: MASK_FILL_COLOR,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.32)',
+    borderColor: MASK_BORDER_COLOR,
     transform: [{ translateY: -thickness / 2 }, { rotate: `${angle}deg` }],
     transformOrigin: 'left center',
   };
@@ -174,6 +178,58 @@ function ActionButton({
   );
 }
 
+function MetaPill({ value }: { value: string }) {
+  return (
+    <View style={styles.metaPill}>
+      <Text style={styles.metaPillText}>{value}</Text>
+    </View>
+  );
+}
+
+function BrushPresetCard({
+  title,
+  subtitle,
+  active,
+  onPress,
+  disabled,
+}: {
+  title: string;
+  subtitle: string;
+  active: boolean;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={({ pressed }) => [
+        styles.brushPresetCard,
+        active && styles.brushPresetCardActive,
+        disabled && styles.buttonDisabled,
+        pressed && !disabled && styles.pressed,
+      ]}
+    >
+      <Text
+        style={[
+          styles.brushPresetTitle,
+          active && styles.brushPresetTitleActive,
+        ]}
+      >
+        {title}
+      </Text>
+      <Text
+        style={[
+          styles.brushPresetSubtitle,
+          active && styles.brushPresetSubtitleActive,
+        ]}
+      >
+        {subtitle}
+      </Text>
+    </Pressable>
+  );
+}
+
 export function SmartEraseScreen({ route, navigation }: Props) {
   const { documentId, pageId } = route.params;
 
@@ -184,6 +240,7 @@ export function SmartEraseScreen({ route, navigation }: Props) {
   const [previewSize, setPreviewSize] = useState<Size>({ width: 0, height: 0 });
   const [pageImageSize, setPageImageSize] = useState<Size>({ width: 0, height: 0 });
   const [strokes, setStrokes] = useState<EraseStroke[]>([]);
+  const [maskVisible, setMaskVisible] = useState(true);
 
   const drawingRef = useRef(false);
 
@@ -198,10 +255,35 @@ export function SmartEraseScreen({ route, navigation }: Props) {
   );
 
   const brushSizeRatio = BRUSH_SIZE_RATIO[brushPreset];
+
   const visualBrushThickness = Math.max(
     8,
     Math.round(Math.max(previewFrame.width, previewFrame.height) * brushSizeRatio),
   );
+
+  const normalizedStrokes = useMemo(
+    () => strokes.filter((stroke) => stroke.length >= 2),
+    [strokes],
+  );
+
+  const strokeCount = normalizedStrokes.length;
+
+  const pointCount = useMemo(
+    () => normalizedStrokes.reduce((sum, stroke) => sum + stroke.length, 0),
+    [normalizedStrokes],
+  );
+
+  const brushLabel = useMemo(() => {
+    switch (brushPreset) {
+      case 'small':
+        return 'Küçük detaylar';
+      case 'large':
+        return 'Büyük alanlar';
+      case 'medium':
+      default:
+        return 'Genel kullanım';
+    }
+  }, [brushPreset]);
 
   useEffect(() => {
     let active = true;
@@ -298,13 +380,19 @@ export function SmartEraseScreen({ route, navigation }: Props) {
     setPreviewSize({ width, height });
   }, []);
 
+  const handleUndo = useCallback(() => {
+    setStrokes((current) => current.slice(0, -1));
+  }, []);
+
+  const handleClear = useCallback(() => {
+    setStrokes([]);
+  }, []);
+
   const handleSave = useCallback(async () => {
     if (!currentPage) {
       Alert.alert('Sayfa yok', 'Silinecek sayfa bulunamadı.');
       return;
     }
-
-    const normalizedStrokes = strokes.filter((stroke) => stroke.length >= 2);
 
     if (!normalizedStrokes.length) {
       Alert.alert('Alan seçilmedi', 'Silmek istediğin alanı önce işaretle.');
@@ -333,7 +421,7 @@ export function SmartEraseScreen({ route, navigation }: Props) {
       }
       setBusy(false);
     }
-  }, [brushSizeRatio, currentPage, navigation, pageId, strokes]);
+  }, [brushSizeRatio, currentPage, navigation, normalizedStrokes, pageId]);
 
   if (loading) {
     return (
@@ -354,7 +442,7 @@ export function SmartEraseScreen({ route, navigation }: Props) {
           <Text style={styles.errorText}>
             İlgili sayfa artık mevcut değil veya belge güncellenmiş olabilir.
           </Text>
-          <View style={styles.actionRow}>
+          <View style={styles.bottomActionRow}>
             <ActionButton title="Geri dön" onPress={() => navigation.goBack()} />
           </View>
         </View>
@@ -367,36 +455,53 @@ export function SmartEraseScreen({ route, navigation }: Props) {
       title="Akıllı Silme"
       subtitle="Kalem izi, küçük işaret ve istenmeyen notları lokal olarak temizle."
     >
-      <View style={styles.infoCard}>
-        <Text style={styles.infoTitle}>Kullanım</Text>
-        <Text style={styles.infoText}>
-          Parmağınla silmek istediğin alanı boya. Bu ilk sürüm beyaz kâğıt üstündeki kalem ve işaretler için optimize edildi.
-        </Text>
+      <View style={styles.heroCard}>
+        <View style={styles.heroTextWrap}>
+          <Text style={styles.heroTitle}>Silinecek alanı boya</Text>
+          <Text style={styles.heroText}>
+            Bu akış özellikle beyaz kâğıt üstündeki işaret, not ve küçük izleri
+            temizlemek için uygundur. Önce alanı işaretle, sonra kaydet.
+          </Text>
+        </View>
+
+        <View style={styles.metaRow}>
+          <MetaPill value={`${strokeCount} stroke`} />
+          <MetaPill value={`${pointCount} nokta`} />
+          <MetaPill value={brushLabel} />
+          <MetaPill value={maskVisible ? 'Maske görünür' : 'Maske gizli'} />
+        </View>
       </View>
 
       <View style={styles.toolbarCard}>
         <Text style={styles.toolbarTitle}>Fırça boyutu</Text>
 
-        <View style={styles.toolbarRow}>
-          <ActionButton
+        <View style={styles.brushPresetRow}>
+          <BrushPresetCard
             title="Küçük"
-            onPress={() => setBrushPreset('small')}
+            subtitle="Nokta ve ince iz"
             active={brushPreset === 'small'}
+            onPress={() => setBrushPreset('small')}
             disabled={busy}
           />
-          <ActionButton
+          <BrushPresetCard
             title="Orta"
-            onPress={() => setBrushPreset('medium')}
+            subtitle="Genel kullanım"
             active={brushPreset === 'medium'}
+            onPress={() => setBrushPreset('medium')}
             disabled={busy}
           />
-          <ActionButton
+          <BrushPresetCard
             title="Büyük"
-            onPress={() => setBrushPreset('large')}
+            subtitle="Hızlı geniş alan"
             active={brushPreset === 'large'}
+            onPress={() => setBrushPreset('large')}
             disabled={busy}
           />
         </View>
+
+        <Text style={styles.toolbarHint}>
+          Görsel fırça kalınlığı: {visualBrushThickness}px
+        </Text>
       </View>
 
       <View
@@ -428,36 +533,57 @@ export function SmartEraseScreen({ route, navigation }: Props) {
           style={styles.previewImage}
         />
 
-        <View
-          pointerEvents="none"
-          style={[
-            styles.strokeOverlay,
-            {
-              left: previewFrame.x,
-              top: previewFrame.y,
-              width: previewFrame.width,
-              height: previewFrame.height,
-            },
-          ]}
-        >
-          {strokes.flatMap((stroke, strokeIndex) =>
-            stroke.slice(1).map((point, pointIndex) => {
-              const previous = stroke[pointIndex];
+        {maskVisible ? (
+          <View
+            pointerEvents="none"
+            style={[
+              styles.strokeOverlay,
+              {
+                left: previewFrame.x,
+                top: previewFrame.y,
+                width: previewFrame.width,
+                height: previewFrame.height,
+              },
+            ]}
+          >
+            {normalizedStrokes.flatMap((stroke, strokeIndex) =>
+              stroke.slice(1).map((point, pointIndex) => {
+                const previous = stroke[pointIndex];
 
-              return (
-                <View
-                  key={`${strokeIndex}-${pointIndex}`}
-                  style={segmentStyle(
-                    previous,
-                    point,
-                    previewFrame.width,
-                    previewFrame.height,
-                    visualBrushThickness,
-                  )}
-                />
-              );
-            }),
-          )}
+                return (
+                  <View
+                    key={`${strokeIndex}-${pointIndex}`}
+                    style={segmentStyle(
+                      previous,
+                      point,
+                      previewFrame.width,
+                      previewFrame.height,
+                      visualBrushThickness,
+                    )}
+                  />
+                );
+              }),
+            )}
+          </View>
+        ) : null}
+
+        <View pointerEvents="none" style={styles.previewHintWrap}>
+          <Text style={styles.previewHintText}>
+            Parmağınla işaretle • Son çizgiyi geri al • Gerekirse maskeyi gizleyip sayfayı kontrol et
+          </Text>
+        </View>
+
+        <View pointerEvents="none" style={styles.brushIndicatorWrap}>
+          <View
+            style={[
+              styles.brushIndicator,
+              {
+                width: visualBrushThickness,
+                height: visualBrushThickness,
+                borderRadius: visualBrushThickness / 2,
+              },
+            ]}
+          />
         </View>
 
         {busy ? (
@@ -468,10 +594,24 @@ export function SmartEraseScreen({ route, navigation }: Props) {
         ) : null}
       </View>
 
-      <View style={styles.actionRow}>
+      <View style={styles.quickActionRow}>
+        <ActionButton
+          title={maskVisible ? 'Maskeyi gizle' : 'Maskeyi göster'}
+          onPress={() => setMaskVisible((current) => !current)}
+          disabled={busy}
+          active={maskVisible}
+        />
+        <ActionButton
+          title="Son çizgiyi geri al"
+          onPress={handleUndo}
+          disabled={busy || strokes.length === 0}
+        />
+      </View>
+
+      <View style={styles.bottomActionRow}>
         <ActionButton
           title="Temizle"
-          onPress={() => setStrokes([])}
+          onPress={handleClear}
           disabled={busy || strokes.length === 0}
         />
         <ActionButton
@@ -503,24 +643,45 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: colors.textSecondary,
   },
-  infoCard: {
+  heroCard: {
     backgroundColor: colors.card,
     borderColor: colors.border,
     borderWidth: 1,
     borderRadius: Radius.xl,
     padding: Spacing.lg,
     marginBottom: Spacing.md,
+    gap: Spacing.md,
     ...Shadows.sm,
   },
-  infoTitle: {
-    ...Typography.titleSmall,
-    color: colors.text,
-    marginBottom: 6,
+  heroTextWrap: {
+    gap: 6,
   },
-  infoText: {
+  heroTitle: {
+    ...Typography.titleLarge,
+    color: colors.text,
+  },
+  heroText: {
     ...Typography.bodySmall,
     color: colors.textSecondary,
     lineHeight: 20,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+  },
+  metaPill: {
+    borderRadius: Radius.full,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  metaPillText: {
+    ...Typography.caption,
+    color: colors.textSecondary,
+    fontWeight: '800',
   },
   toolbarCard: {
     backgroundColor: colors.card,
@@ -529,21 +690,55 @@ const styles = StyleSheet.create({
     borderRadius: Radius.xl,
     padding: Spacing.lg,
     marginBottom: Spacing.md,
+    gap: Spacing.md,
     ...Shadows.sm,
   },
   toolbarTitle: {
     ...Typography.titleSmall,
     color: colors.text,
-    marginBottom: Spacing.sm,
   },
-  toolbarRow: {
+  brushPresetRow: {
     flexDirection: 'row',
     gap: Spacing.sm,
-    flexWrap: 'wrap',
+  },
+  brushPresetCard: {
+    flex: 1,
+    minHeight: 84,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    gap: 6,
+  },
+  brushPresetCardActive: {
+    borderColor: colors.primary,
+    backgroundColor: 'rgba(53, 199, 111, 0.10)',
+  },
+  brushPresetTitle: {
+    ...Typography.bodySmall,
+    color: colors.text,
+    fontWeight: '800',
+  },
+  brushPresetTitleActive: {
+    color: colors.primary,
+  },
+  brushPresetSubtitle: {
+    ...Typography.caption,
+    color: colors.textSecondary,
+    lineHeight: 16,
+  },
+  brushPresetSubtitleActive: {
+    color: colors.textSecondary,
+  },
+  toolbarHint: {
+    ...Typography.bodySmall,
+    color: colors.textTertiary,
   },
   previewContainer: {
     width: '100%',
-    height: 460,
+    height: 480,
     borderRadius: Radius.xl,
     borderWidth: 1,
     borderColor: colors.border,
@@ -561,6 +756,40 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderRadius: 8,
   },
+  previewHintWrap: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    bottom: 12,
+  },
+  previewHintText: {
+    color: '#D9E6EE',
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
+    backgroundColor: 'rgba(11, 15, 20, 0.74)',
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 10,
+  },
+  brushIndicatorWrap: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: 'rgba(11, 15, 20, 0.74)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  brushIndicator: {
+    backgroundColor: MASK_FILL_COLOR,
+    borderWidth: 1,
+    borderColor: MASK_CENTER_COLOR,
+  },
   busyOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
@@ -573,16 +802,26 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontWeight: '700',
   },
-  actionRow: {
+  quickActionRow: {
+    flexDirection: 'row',
     gap: Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  bottomActionRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    marginBottom: Spacing.xs,
   },
   secondaryButton: {
+    flex: 1,
     backgroundColor: colors.surfaceElevated,
     borderColor: colors.border,
     borderWidth: 1,
     borderRadius: Radius.xl,
     paddingVertical: 14,
     paddingHorizontal: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   secondaryButtonText: {
     color: colors.text,
@@ -591,10 +830,13 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   primaryButton: {
+    flex: 1,
     backgroundColor: colors.primary,
     borderRadius: Radius.xl,
     paddingVertical: 14,
     paddingHorizontal: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   primaryButtonText: {
     color: colors.onPrimary,
@@ -632,5 +874,6 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: colors.textSecondary,
     lineHeight: 22,
+    marginBottom: Spacing.md,
   },
 });

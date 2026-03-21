@@ -7,7 +7,6 @@
     "scheme": "pdfkase",
     "userInterfaceStyle": "automatic",
     "icon": "./assets/images/icon.png",
-    "newArchEnabled": true,
     "ios": {
       "bundleIdentifier": "com.ersatbulbul.pdfkase",
       "icon": "./assets/images/icon.png",
@@ -77,7 +76,10 @@
           "imageWidth": 160
         }
       ],
-      "react-native-pdf-jsi"
+      "react-native-pdf-jsi",
+      "expo-secure-store",
+      "expo-sharing",
+      "expo-sqlite"
     ]
   }
 }

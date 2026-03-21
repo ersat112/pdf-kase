@@ -1,11 +1,20 @@
 import * as SecureStore from 'expo-secure-store';
 
+import { getBillingRuntimeDisplayLabel } from '../../config/runtime';
+
 export type BillingPlan = 'free' | 'monthly' | 'yearly' | 'lifetime';
+
+export type BillingMetadata = {
+  mode: 'mock' | 'none';
+  updatedAt: string | null;
+  version: 'v1';
+};
 
 export type BillingState = {
   isPro: boolean;
   plan: BillingPlan;
   expiresAt: string | null;
+  metadata?: BillingMetadata | null;
 };
 
 const BILLING_STATE_KEY = 'pdf-kase.billing.state.v1';
@@ -16,6 +25,11 @@ export const defaultBillingState: BillingState = {
   isPro: false,
   plan: 'free',
   expiresAt: null,
+  metadata: {
+    mode: 'none',
+    updatedAt: null,
+    version: 'v1',
+  },
 };
 
 function isValidPlan(plan: unknown): plan is BillingPlan {
@@ -46,6 +60,33 @@ function normalizeExpiresAt(expiresAt: unknown) {
   return new Date(parsed).toISOString();
 }
 
+function normalizeMetadata(
+  value: unknown,
+  fallbackMode: BillingMetadata['mode'],
+): BillingMetadata {
+  if (!isObjectRecord(value)) {
+    return {
+      mode: fallbackMode,
+      updatedAt: null,
+      version: 'v1',
+    };
+  }
+
+  const mode =
+    value.mode === 'mock' || value.mode === 'none' ? value.mode : fallbackMode;
+
+  const updatedAt =
+    typeof value.updatedAt === 'string' && value.updatedAt.trim().length > 0
+      ? value.updatedAt
+      : null;
+
+  return {
+    mode,
+    updatedAt,
+    version: 'v1',
+  };
+}
+
 export function isBillingExpired(expiresAt: string | null): boolean {
   if (!expiresAt) {
     return false;
@@ -63,12 +104,14 @@ export function isBillingExpired(expiresAt: string | null): boolean {
 function getNormalizedPremiumState(
   plan: Exclude<BillingPlan, 'free'>,
   expiresAt: string | null,
+  metadata: BillingMetadata,
 ): BillingState {
   if (plan === 'lifetime') {
     return {
       isPro: true,
       plan,
       expiresAt: null,
+      metadata,
     };
   }
 
@@ -80,6 +123,7 @@ function getNormalizedPremiumState(
     isPro: true,
     plan,
     expiresAt,
+    metadata,
   };
 }
 
@@ -111,7 +155,9 @@ export function normalizeBillingState(
     return defaultBillingState;
   }
 
-  return getNormalizedPremiumState(plan, expiresAt);
+  const metadata = normalizeMetadata(input.metadata, 'mock');
+
+  return getNormalizedPremiumState(plan, expiresAt, metadata);
 }
 
 export function createBillingState(
@@ -131,6 +177,21 @@ export function isPremiumActive(state: BillingState | null | undefined) {
 
   const normalized = normalizeBillingState(state);
   return normalized.isPro;
+}
+
+export function isMockBillingState(state: BillingState | null | undefined) {
+  if (!state) {
+    return false;
+  }
+
+  const normalized = normalizeBillingState(state);
+  return normalized.isPro && normalized.metadata?.mode === 'mock';
+}
+
+export function getBillingRuntimeLabel(state: BillingState | null | undefined) {
+  return isMockBillingState(state)
+    ? 'Önizleme premium katmanı'
+    : getBillingRuntimeDisplayLabel();
 }
 
 export async function getStoredBillingState(): Promise<BillingState> {

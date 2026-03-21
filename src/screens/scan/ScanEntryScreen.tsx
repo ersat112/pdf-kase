@@ -10,15 +10,23 @@ import {
   InteractionManager,
   Linking,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScanEntryFocusCard } from '../../components/scan/ScanEntryFocusCard';
+import {
+  ScanModeRail,
+  type ScanModeRailItem,
+} from '../../components/scan/ScanModeRail';
+import {
+  ScanQuickSettingBar,
+  type ScanQuickSettingItem,
+} from '../../components/scan/ScanQuickSettingBar';
 import { executeToolPrimaryAction } from '../../features/tools/tools.actions';
-import { findToolByKey } from '../../features/tools/tools.registry';
+import { findToolByKey, scanLauncherKeys } from '../../features/tools/tools.registry';
 import type { ToolDefinition } from '../../features/tools/tools.types';
 import {
   createDraftFromImportedImage,
@@ -31,7 +39,13 @@ import type {
   RootStackParamList,
   ScanEntryLaunchMode,
 } from '../../navigation/types';
-import { Radius, Shadows, Spacing, Typography, colors } from '../../theme';
+import {
+  Radius,
+  Shadows,
+  Spacing,
+  Typography,
+  colors,
+} from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ScanEntry'>;
 
@@ -52,6 +66,14 @@ type LauncherSettingsState = Record<LauncherSettingKey, boolean>;
 type CaptureTone = 'Renkli' | 'Gri' | 'Siyah Beyaz';
 type CaptureCountMode = 'single' | 'multi';
 
+type EntryModeSurfaceCopy = {
+  eyebrow: string;
+  title: string;
+  description: string;
+  helper: string;
+  primaryActionLabel: string;
+};
+
 const AUTO_RUN_MODES: ReadonlySet<ScanEntryLaunchMode> = new Set([
   'camera',
   'import-images',
@@ -59,49 +81,11 @@ const AUTO_RUN_MODES: ReadonlySet<ScanEntryLaunchMode> = new Set([
   'id-card',
 ]);
 
-const MODE_ORDER = [
-  'edit-sign',
-  'scan-id-card',
-  'scan-ocr-text',
-  'convert-excel',
-  'scan-timestamp',
-  'scan-id-photo',
-  'scan-slides',
-  'scan-camera',
-  'convert-word',
-  'scan-question-set',
-  'scan-translate',
-  'scan-book',
-  'edit-enhance-photo',
-  'edit-smart-erase',
-  'scan-count-cam',
-  'utility-qr',
-] as const;
-
-const MODE_LABELS: Record<string, string> = {
-  'scan-camera': 'Tara',
-  'convert-word': "Word'e",
-  'scan-question-set': 'Soru Kümesi',
-  'scan-translate': 'Çevir',
-  'scan-book': 'Kitap',
-  'edit-enhance-photo': 'Fotoğraf İyileştir',
-  'edit-smart-erase': 'Akıllı Silme',
-  'scan-count-cam': 'CountCam',
-  'utility-qr': 'QR Kod',
-  'edit-sign': 'İmzala',
-  'scan-id-card': 'Kimlik Kartları',
-  'scan-ocr-text': 'Metni Çıkar',
-  'convert-excel': "Excel'e",
-  'scan-timestamp': 'Zaman Damgası',
-  'scan-id-photo': 'Kimlik Fotoğraf Yapıcı',
-  'scan-slides': 'Slaytlar',
-};
-
 const SETTING_LABELS: Record<LauncherSettingKey, string> = {
   autoCapture: 'Otomatik Yakala',
   grid: 'Izgara',
   rotateByText: 'Metin Yönüne Göre Döndür',
-  volumeCapture: 'Ses Düğmesi ile Yakalayın',
+  volumeCapture: 'Ses Düğmesi ile Yakala',
   autoCrop: 'Otomatik Kırp',
 };
 
@@ -123,32 +107,8 @@ function getInitialLauncherKey(initialMode?: ScanEntryLaunchMode) {
       return 'scan-id-card';
     case 'enhance-photo':
       return 'edit-enhance-photo';
-    case 'word':
-      return 'convert-word';
-    case 'question-set':
-      return 'scan-question-set';
-    case 'translate':
-      return 'scan-translate';
-    case 'book':
-      return 'scan-book';
-    case 'smart-erase':
-      return 'edit-smart-erase';
-    case 'count-cam':
-      return 'scan-count-cam';
     case 'qr':
       return 'utility-qr';
-    case 'sign':
-      return 'edit-sign';
-    case 'ocr':
-      return 'scan-ocr-text';
-    case 'excel':
-      return 'convert-excel';
-    case 'timestamp':
-      return 'scan-timestamp';
-    case 'id-photo':
-      return 'scan-id-photo';
-    case 'slides':
-      return 'scan-slides';
     case 'camera':
     default:
       return 'scan-camera';
@@ -160,13 +120,106 @@ function looksLikeUrl(value: string) {
 }
 
 function buildLauncherTools() {
-  return MODE_ORDER.map((key) => findToolByKey(key)).filter(
-    (tool): tool is ToolDefinition => Boolean(tool),
-  );
+  return scanLauncherKeys
+    .map((key) => findToolByKey(key))
+    .filter((tool): tool is ToolDefinition => Boolean(tool))
+    .filter(
+      (tool) =>
+        tool.availability === 'ready' &&
+        tool.routeTarget === 'ScanEntry' &&
+        tool.scanLauncherVisible !== false,
+    );
 }
 
 function resolveModeLabel(tool: ToolDefinition) {
-  return MODE_LABELS[tool.key] ?? tool.title;
+  return tool.title;
+}
+
+function isScannerMode(mode?: ScanEntryLaunchMode) {
+  return mode === 'camera' || mode === 'enhance-photo' || mode === 'id-card';
+}
+
+function isLivePreviewMode(mode?: ScanEntryLaunchMode) {
+  return isScannerMode(mode) || mode === 'qr';
+}
+
+function resolveEntryModeSurfaceCopy(tool: ToolDefinition | null): EntryModeSurfaceCopy {
+  const mode = tool?.scanEntryMode;
+
+  switch (mode) {
+    case 'camera':
+      return {
+        eyebrow: 'Belgeyi al',
+        title: 'Tek akış belge tarama',
+        description:
+          'Belgeyi tara, sayfaları tek dosyada topla ve doğrudan düzenleme akışına geç.',
+        helper:
+          'Deklanşöre bastığında native scanner açılır. Sonuç belge detaya ve editöre taşınır.',
+        primaryActionLabel: tool?.primaryActionLabel ?? 'Taramayı başlat',
+      };
+    case 'enhance-photo':
+      return {
+        eyebrow: 'Düzeltme odaklı giriş',
+        title: 'Fotoğrafı belgeye çevir',
+        description:
+          'Perspektif düzeltme, temiz sayfa görünümü ve daha iyi çıktı için belgeyi iyileştirme akışından başlat.',
+        helper:
+          'Bu giriş taramayı başlatır; devamında belge detayı ve editör yüzeyi kullanılır.',
+        primaryActionLabel: tool?.primaryActionLabel ?? 'İyileştirme akışını aç',
+      };
+    case 'id-card':
+      return {
+        eyebrow: 'Kimlik tarama',
+        title: 'Ön ve arka yüzü düzenli topla',
+        description:
+          'Kimlik odaklı giriş akışı ile kartı hızlıca belgeye dönüştür ve sonraki OCR adımına hazırla.',
+        helper:
+          'Tarama sonrası sayfalar belge olarak kaydedilir; detay ekranından OCR ve export devam eder.',
+        primaryActionLabel: tool?.primaryActionLabel ?? 'Kimlik taramayı başlat',
+      };
+    case 'import-images':
+      return {
+        eyebrow: 'Galeriden belge',
+        title: 'Görselleri tek dosyada topla',
+        description:
+          'Galeriden bir veya birden fazla görsel seç, sayfa sırasıyla belge taslağına dönüştür.',
+        helper:
+          'Tek seçimde hızlı taslak, çoklu seçimde çok sayfalı belge oluşturulur.',
+        primaryActionLabel: tool?.primaryActionLabel ?? 'Görsel seç',
+      };
+    case 'import-files':
+      return {
+        eyebrow: 'PDF ve dosya içe aktar',
+        title: 'Hazır dosyayı belge havuzuna al',
+        description:
+          'PDF ve görsel dosyalarını tek yüzeyden içe aktar, ardından belge detayı veya kütüphaneden devam et.',
+        helper:
+          'PDF hazır belge olarak, görseller ise yeni sayfa taslağı olarak kaydedilir.',
+        primaryActionLabel: tool?.primaryActionLabel ?? 'Dosya seç',
+      };
+    case 'qr':
+      return {
+        eyebrow: 'Canlı QR tarama',
+        title: 'Bağlantıyı veya metni anında yakala',
+        description:
+          'Kamera QR kodu canlı okur. URL ise doğrudan açabilir, metin ise kopyalayabilirsin.',
+        helper:
+          'Torch sadece QR modunda görünür. İlk okutulan sonuç kilitlenir ve kartta gösterilir.',
+        primaryActionLabel: tool?.primaryActionLabel ?? 'QR tarayıcıyı aç',
+      };
+    default:
+      return {
+        eyebrow: 'Belge girişi',
+        title: tool?.title ?? 'Belge akışı',
+        description:
+          tool?.shortDescription ??
+          'Belgeyi al, düzenle, OCR uygula ve sonucu paylaşılabilir çıktıya dönüştür.',
+        helper:
+          tool?.longDescription ??
+          'Bu yüzey belge akışını başlatmak için kullanılır.',
+        primaryActionLabel: tool?.primaryActionLabel ?? 'Akışı başlat',
+      };
+  }
 }
 
 function ToggleRow({
@@ -191,31 +244,6 @@ function ToggleRow({
           {value ? 'ON' : 'OFF'}
         </Text>
       </View>
-    </Pressable>
-  );
-}
-
-function ModeChip({
-  title,
-  active,
-  onPress,
-}: {
-  title: string;
-  active: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.modeChip,
-        active && styles.modeChipActive,
-        pressed && styles.pressed,
-      ]}
-    >
-      <Text style={[styles.modeChipText, active && styles.modeChipTextActive]}>
-        {title}
-      </Text>
     </Pressable>
   );
 }
@@ -273,6 +301,15 @@ export function ScanEntryScreen({ navigation, route }: Props) {
     );
   }, [launcherTools, selectedToolKey]);
 
+  const selectedMode = selectedTool?.scanEntryMode;
+  const isQrMode = selectedMode === 'qr';
+  const showScannerControls = isScannerMode(selectedMode);
+  const showLivePreview = isLivePreviewMode(selectedMode);
+  const focusCopy = useMemo(
+    () => resolveEntryModeSurfaceCopy(selectedTool),
+    [selectedTool],
+  );
+
   useEffect(() => {
     setSelectedToolKey(initialLauncherKey);
   }, [initialLauncherKey]);
@@ -285,6 +322,13 @@ export function ScanEntryScreen({ navigation, route }: Props) {
       qrScanLockedRef.current = false;
     }
   }, [selectedTool?.scanEntryMode]);
+
+  useEffect(() => {
+    if (!showScannerControls) {
+      setSettingsOpen(false);
+      setTonePickerOpen(false);
+    }
+  }, [showScannerControls]);
 
   const beginLoading = useCallback((message: string) => {
     if (loadingRef.current) {
@@ -634,8 +678,6 @@ export function ScanEntryScreen({ navigation, route }: Props) {
     };
   }, [autoLaunchSignature, handleSelectedToolAction, selectedTool]);
 
-  const isQrMode = selectedTool?.scanEntryMode === 'qr';
-
   const handlePrimaryCapture = useCallback(() => {
     if (!selectedTool) {
       return;
@@ -660,250 +702,257 @@ export function ScanEntryScreen({ navigation, route }: Props) {
     navigation.navigate('Home');
   }, [navigation]);
 
+  const modeRailItems = useMemo<ScanModeRailItem[]>(
+    () =>
+      launcherTools.map((tool) => ({
+        key: tool.key,
+        title: resolveModeLabel(tool),
+        subtitle: tool.shortDescription ?? focusCopy.helper,
+        active: tool.key === selectedToolKey,
+        onPress: () => setSelectedToolKey(tool.key),
+      })),
+    [focusCopy.helper, launcherTools, selectedToolKey],
+  );
+
+  const focusBadges = useMemo(() => {
+    const items: string[] = [];
+
+    if (showScannerControls) {
+      items.push(captureCountMode === 'single' ? 'Tek çekim' : 'Toplu çekim');
+      items.push(captureTone);
+      if (hdEnabled) {
+        items.push('HD');
+      }
+    }
+
+    if (isQrMode && qrEnabled) {
+      items.push('Canlı QR');
+    }
+
+    selectedTool?.badges?.slice(0, 2).forEach((badge) => items.push(badge));
+
+    return items;
+  }, [captureCountMode, captureTone, hdEnabled, isQrMode, qrEnabled, selectedTool?.badges]);
+
+  const quickSettingItems = useMemo<ScanQuickSettingItem[]>(() => {
+    const items: ScanQuickSettingItem[] = [];
+
+    if (showScannerControls) {
+      items.push(
+        {
+          key: 'count-single',
+          label: 'Tek',
+          icon: 'radio-button-on-outline',
+          active: captureCountMode === 'single',
+          onPress: () => setCaptureCountMode('single'),
+        },
+        {
+          key: 'count-multi',
+          label: 'Toplu',
+          icon: 'copy-outline',
+          active: captureCountMode === 'multi',
+          onPress: () => setCaptureCountMode('multi'),
+        },
+        {
+          key: 'hd',
+          label: 'HD',
+          icon: 'sparkles-outline',
+          active: hdEnabled,
+          onPress: () => setHdEnabled((current) => !current),
+        },
+        {
+          key: 'tone',
+          label: captureTone,
+          icon: 'color-filter-outline',
+          active: tonePickerOpen,
+          onPress: () => {
+            setTonePickerOpen((current) => !current);
+            setSettingsOpen(false);
+          },
+        },
+        {
+          key: 'settings',
+          label: 'Ayarlar',
+          icon: 'options-outline',
+          active: settingsOpen,
+          onPress: () => {
+            setSettingsOpen((current) => !current);
+            setTonePickerOpen(false);
+          },
+        },
+      );
+    }
+
+    if (isQrMode) {
+      items.push({
+        key: 'torch',
+        label: qrTorchEnabled ? 'Torch açık' : 'Torch',
+        icon: qrTorchEnabled ? 'flash' : 'flash-off',
+        active: qrTorchEnabled,
+        onPress: () => setQrTorchEnabled((current) => !current),
+      });
+    }
+
+    return items;
+  }, [
+    captureCountMode,
+    captureTone,
+    hdEnabled,
+    isQrMode,
+    qrTorchEnabled,
+    settingsOpen,
+    showScannerControls,
+    tonePickerOpen,
+  ]);
+
   return (
     <View style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
-        <View style={styles.topBar}>
+        <View style={styles.header}>
           <Pressable
             onPress={handleClose}
             style={({ pressed }) => [
-              styles.topIconButton,
+              styles.headerIconButton,
               pressed && styles.pressed,
             ]}
           >
             <Ionicons name="close" size={22} color={colors.text} />
           </Pressable>
 
-          <View style={styles.topBarRight}>
-            <Pressable
-              onPress={() => setQrTorchEnabled((current) => !current)}
-              style={({ pressed }) => [
-                styles.topIconButton,
-                qrTorchEnabled && styles.topIconButtonActive,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Ionicons
-                name={qrTorchEnabled ? 'flash' : 'flash-off'}
-                size={18}
-                color={qrTorchEnabled ? colors.onPrimary : colors.text}
-              />
-            </Pressable>
-
-            <Pressable
-              onPress={() => setHdEnabled((current) => !current)}
-              style={({ pressed }) => [
-                styles.topBadgeButton,
-                hdEnabled && styles.topBadgeButtonActive,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.topBadgeButtonText,
-                  hdEnabled && styles.topBadgeButtonTextActive,
-                ]}
-              >
-                HD
-              </Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => {
-                setTonePickerOpen((current) => !current);
-                setSettingsOpen(false);
-              }}
-              style={({ pressed }) => [
-                styles.topIconButton,
-                tonePickerOpen && styles.topIconButtonActive,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Ionicons
-                name="color-filter-outline"
-                size={18}
-                color={tonePickerOpen ? colors.onPrimary : colors.text}
-              />
-            </Pressable>
-
-            <Pressable
-              onPress={() => {
-                setSettingsOpen((current) => !current);
-                setTonePickerOpen(false);
-              }}
-              style={({ pressed }) => [
-                styles.topIconButton,
-                settingsOpen && styles.topIconButtonActive,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Ionicons
-                name="ellipsis-horizontal"
-                size={18}
-                color={settingsOpen ? colors.onPrimary : colors.text}
-              />
-            </Pressable>
+          <View style={styles.headerTextWrap}>
+            <Text style={styles.headerTitle}>Belge başlangıcı</Text>
+            <Text style={styles.headerSubtitle}>{focusCopy.eyebrow}</Text>
           </View>
+
+          <Pressable
+            onPress={() => navigation.navigate('Documents')}
+            style={({ pressed }) => [
+              styles.headerIconButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Ionicons
+              name="document-text-outline"
+              size={20}
+              color={colors.text}
+            />
+          </Pressable>
         </View>
 
-        {tonePickerOpen ? (
-          <View style={styles.panelCard}>
-            <Text style={styles.panelTitle}>Renk Modu</Text>
-            <View style={styles.toneRow}>
-              {TONE_OPTIONS.map((tone) => {
-                const active = tone === captureTone;
+        <View style={styles.content}>
+          <ScanEntryFocusCard
+            eyebrow={focusCopy.eyebrow}
+            title={focusCopy.title}
+            description={focusCopy.description}
+            helper={focusCopy.helper}
+            badges={focusBadges}
+          />
 
-                return (
-                  <Pressable
-                    key={tone}
-                    onPress={() => setCaptureTone(tone)}
-                    style={({ pressed }) => [
-                      styles.toneChip,
-                      active && styles.toneChipActive,
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.toneChipText,
-                        active && styles.toneChipTextActive,
+          <ScanModeRail items={modeRailItems} />
+
+          <ScanQuickSettingBar items={quickSettingItems} />
+
+          {tonePickerOpen ? (
+            <View style={styles.panelCard}>
+              <Text style={styles.panelTitle}>Renk modu</Text>
+              <View style={styles.toneRow}>
+                {TONE_OPTIONS.map((tone) => {
+                  const active = tone === captureTone;
+
+                  return (
+                    <Pressable
+                      key={tone}
+                      onPress={() => setCaptureTone(tone)}
+                      style={({ pressed }) => [
+                        styles.toneChip,
+                        active && styles.toneChipActive,
+                        pressed && styles.pressed,
                       ]}
                     >
-                      {tone}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-        ) : null}
-
-        {settingsOpen ? (
-          <View style={styles.panelCard}>
-            <Text style={styles.panelTitle}>Ayarlar</Text>
-
-            {(Object.keys(SETTING_LABELS) as LauncherSettingKey[]).map((key) => (
-              <ToggleRow
-                key={key}
-                label={SETTING_LABELS[key]}
-                value={launcherSettings[key]}
-                onPress={() => toggleLauncherSetting(key)}
-              />
-            ))}
-          </View>
-        ) : null}
-
-        <View style={styles.previewSection}>
-          <View style={styles.previewFrame}>
-            {isQrMode && qrEnabled && cameraPermission?.granted ? (
-              <CameraView
-                style={styles.camera}
-                facing="back"
-                enableTorch={qrTorchEnabled}
-                barcodeScannerSettings={{
-                  barcodeTypes: ['qr'],
-                }}
-                onBarcodeScanned={handleQrScanned}
-              />
-            ) : (
-              <View style={styles.previewPlaceholder}>
-                <Text style={styles.previewTitle}>
-                  {selectedTool ? resolveModeLabel(selectedTool) : 'Tara'}
-                </Text>
-                <Text style={styles.previewSubtitle}>
-                  {selectedTool?.shortDescription ??
-                    'Kamera launcher ekranı hazır. Deklanşör ile seçili akışı başlat.'}
-                </Text>
+                      <Text
+                        style={[
+                          styles.toneChipText,
+                          active && styles.toneChipTextActive,
+                        ]}
+                      >
+                        {tone}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
               </View>
-            )}
-
-            <View pointerEvents="none" style={styles.previewGuideOverlay}>
-              <View style={styles.previewGuideBox} />
             </View>
+          ) : null}
 
-            <View style={styles.captureCountSwitch}>
-              <Pressable
-                onPress={() => setCaptureCountMode('single')}
-                style={({ pressed }) => [
-                  styles.captureCountButton,
-                  captureCountMode === 'single' && styles.captureCountButtonActive,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.captureCountButtonText,
-                    captureCountMode === 'single' &&
-                      styles.captureCountButtonTextActive,
-                  ]}
-                >
-                  Tek
-                </Text>
-              </Pressable>
+          {settingsOpen ? (
+            <View style={styles.panelCard}>
+              <Text style={styles.panelTitle}>Tarama ayarları</Text>
 
-              <Pressable
-                onPress={() => setCaptureCountMode('multi')}
-                style={({ pressed }) => [
-                  styles.captureCountButton,
-                  captureCountMode === 'multi' && styles.captureCountButtonActive,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.captureCountButtonText,
-                    captureCountMode === 'multi' &&
-                      styles.captureCountButtonTextActive,
-                  ]}
-                >
-                  Toplu
-                </Text>
-              </Pressable>
+              {(Object.keys(SETTING_LABELS) as LauncherSettingKey[]).map((key) => (
+                <ToggleRow
+                  key={key}
+                  label={SETTING_LABELS[key]}
+                  value={launcherSettings[key]}
+                  onPress={() => toggleLauncherSetting(key)}
+                />
+              ))}
+            </View>
+          ) : null}
+
+          <View style={styles.previewSection}>
+            <View style={styles.previewFrame}>
+              {isQrMode && qrEnabled && cameraPermission?.granted ? (
+                <CameraView
+                  style={styles.camera}
+                  facing="back"
+                  enableTorch={qrTorchEnabled}
+                  barcodeScannerSettings={{
+                    barcodeTypes: ['qr'],
+                  }}
+                  onBarcodeScanned={handleQrScanned}
+                />
+              ) : (
+                <View style={styles.previewPlaceholder}>
+                  <Text style={styles.previewEyebrow}>{focusCopy.eyebrow}</Text>
+                  <Text style={styles.previewTitle}>{focusCopy.title}</Text>
+                  <Text style={styles.previewSubtitle}>{focusCopy.description}</Text>
+                  <Text style={styles.previewHelper}>{focusCopy.helper}</Text>
+                </View>
+              )}
+
+              {showLivePreview ? (
+                <View pointerEvents="none" style={styles.previewGuideOverlay}>
+                  <View style={styles.previewGuideBox} />
+                </View>
+              ) : null}
             </View>
           </View>
-        </View>
 
-        {qrResult ? (
-          <View style={styles.qrResultCard}>
-            <Text style={styles.qrResultTitle}>Okutulan İçerik</Text>
-            <Text style={styles.qrResultType}>{qrResult.type}</Text>
-            <Text selectable style={styles.qrResultValue}>
-              {qrResult.data}
-            </Text>
+          {qrResult ? (
+            <View style={styles.qrResultCard}>
+              <Text style={styles.qrResultTitle}>Okutulan içerik</Text>
+              <Text style={styles.qrResultType}>{qrResult.type}</Text>
+              <Text selectable style={styles.qrResultValue}>
+                {qrResult.data}
+              </Text>
 
-            {looksLikeUrl(qrResult.data) ? (
-              <Pressable
-                onPress={() => {
-                  void handleOpenQrResult();
-                }}
-                style={({ pressed }) => [
-                  styles.qrOpenButton,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <Text style={styles.qrOpenButtonText}>Bağlantıyı Aç</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        ) : null}
+              {looksLikeUrl(qrResult.data) ? (
+                <Pressable
+                  onPress={() => {
+                    void handleOpenQrResult();
+                  }}
+                  style={({ pressed }) => [
+                    styles.qrOpenButton,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text style={styles.qrOpenButtonText}>Bağlantıyı aç</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ) : null}
 
-        <View style={styles.bottomSheet}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.modeRail}
-          >
-            {launcherTools.map((tool) => (
-              <ModeChip
-                key={tool.key}
-                title={resolveModeLabel(tool)}
-                active={tool.key === selectedToolKey}
-                onPress={() => setSelectedToolKey(tool.key)}
-              />
-            ))}
-          </ScrollView>
-
-          <View style={styles.shutterRow}>
+          <View style={styles.bottomDock}>
             <Pressable
               onPress={() => navigateToHomeTab('ToolsTab')}
               style={({ pressed }) => [
@@ -918,12 +967,33 @@ export function ScanEntryScreen({ navigation, route }: Props) {
               onPress={handlePrimaryCapture}
               disabled={loading || !selectedTool}
               style={({ pressed }) => [
-                styles.shutterButtonOuter,
-                (loading || !selectedTool) && styles.shutterButtonDisabled,
+                styles.primaryActionButton,
+                (loading || !selectedTool) && styles.primaryActionButtonDisabled,
                 pressed && !loading && styles.pressed,
               ]}
             >
-              <View style={styles.shutterButtonInner} />
+              {loading ? (
+                <ActivityIndicator size="small" color={colors.onPrimary} />
+              ) : (
+                <>
+                  <Ionicons
+                    name={
+                      isQrMode
+                        ? 'qr-code-outline'
+                        : selectedMode === 'import-files'
+                          ? 'document-attach-outline'
+                          : selectedMode === 'import-images'
+                            ? 'images-outline'
+                            : 'scan-outline'
+                    }
+                    size={18}
+                    color={colors.onPrimary}
+                  />
+                  <Text style={styles.primaryActionButtonText}>
+                    {focusCopy.primaryActionLabel}
+                  </Text>
+                </>
+              )}
             </Pressable>
 
             <Pressable
@@ -934,24 +1004,20 @@ export function ScanEntryScreen({ navigation, route }: Props) {
               ]}
             >
               <Ionicons
-                name="document-text-outline"
+                name="folder-open-outline"
                 size={22}
                 color={colors.text}
               />
             </Pressable>
           </View>
 
-          {loading ? (
-            <View style={styles.loadingRow}>
-              <ActivityIndicator size="small" color={colors.primary} />
-              <Text style={styles.loadingText}>{loadingText}</Text>
-            </View>
-          ) : selectedTool ? (
-            <Text style={styles.modeHintText}>
-              {resolveModeLabel(selectedTool)} •{' '}
-              {captureCountMode === 'single' ? 'Tek çekim' : 'Toplu çekim'}
-            </Text>
-          ) : null}
+          <Text style={styles.modeHintText}>
+            {loading
+              ? loadingText
+              : selectedTool
+                ? `${resolveModeLabel(selectedTool)} • ${focusCopy.primaryActionLabel}`
+                : 'Belge modu seç'}
+          </Text>
         </View>
       </SafeAreaView>
     </View>
@@ -967,58 +1033,48 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  topBar: {
+  header: {
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.sm,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: Spacing.md,
   },
-  topBarRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-  },
-  topIconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
+  headerTextWrap: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 2,
   },
-  topIconButtonActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  topBadgeButton: {
-    minWidth: 46,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: Spacing.md,
-  },
-  topBadgeButtonActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  topBadgeButtonText: {
-    ...Typography.bodySmall,
+  headerTitle: {
+    ...Typography.titleSmall,
     color: colors.text,
-    fontWeight: '800',
+    textAlign: 'center',
   },
-  topBadgeButtonTextActive: {
-    color: colors.onPrimary,
+  headerSubtitle: {
+    ...Typography.caption,
+    color: colors.textTertiary,
+    textAlign: 'center',
+  },
+  headerIconButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  content: {
+    flex: 1,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.lg,
+    gap: Spacing.md,
   },
   panelCard: {
-    marginTop: Spacing.md,
-    marginHorizontal: Spacing.lg,
     borderRadius: Radius.xl,
     borderWidth: 1,
     borderColor: colors.border,
@@ -1101,9 +1157,7 @@ const styles = StyleSheet.create({
   },
   previewSection: {
     flex: 1,
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.md,
-    paddingBottom: Spacing.xs,
+    minHeight: 260,
   },
   previewFrame: {
     flex: 1,
@@ -1125,6 +1179,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: Spacing.sm,
   },
+  previewEyebrow: {
+    ...Typography.caption,
+    color: colors.primary,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
   previewTitle: {
     ...Typography.titleLarge,
     color: colors.text,
@@ -1135,6 +1195,13 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: 21,
+  },
+  previewHelper: {
+    ...Typography.bodySmall,
+    color: colors.textTertiary,
+    textAlign: 'center',
+    lineHeight: 20,
+    maxWidth: 320,
   },
   previewGuideOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -1151,43 +1218,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.78)',
     backgroundColor: 'transparent',
   },
-  captureCountSwitch: {
-    position: 'absolute',
-    bottom: Spacing.md,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: Spacing.xs,
-  },
-  captureCountButton: {
-    minWidth: 54,
-    minHeight: 28,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.16)',
-    backgroundColor: 'rgba(11, 15, 20, 0.64)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: Spacing.sm,
-  },
-  captureCountButtonActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  captureCountButtonText: {
-    ...Typography.caption,
-    color: colors.text,
-    fontWeight: '800',
-    fontSize: 11,
-    lineHeight: 14,
-  },
-  captureCountButtonTextActive: {
-    color: colors.onPrimary,
-  },
   qrResultCard: {
-    marginHorizontal: Spacing.lg,
-    marginBottom: Spacing.sm,
     borderRadius: Radius.xl,
     borderWidth: 1,
     borderColor: colors.border,
@@ -1221,88 +1252,47 @@ const styles = StyleSheet.create({
     color: colors.onPrimary,
     fontWeight: '800',
   },
-  bottomSheet: {
-    paddingTop: Spacing.xs,
-    paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.lg,
-    gap: Spacing.sm,
-  },
-  modeRail: {
-    gap: Spacing.sm,
-    paddingRight: Spacing.md,
-  },
-  modeChip: {
-    minHeight: 40,
-    borderRadius: Radius.full,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    paddingHorizontal: Spacing.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modeChipActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  modeChipText: {
-    ...Typography.bodySmall,
-    color: colors.text,
-    fontWeight: '700',
-  },
-  modeChipTextActive: {
-    color: colors.onPrimary,
-  },
-  shutterRow: {
+  bottomDock: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: Spacing.lg,
+    gap: Spacing.md,
   },
   sideActionButton: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 54,
+    height: 54,
+    borderRadius: 27,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.card,
     alignItems: 'center',
     justifyContent: 'center',
+    ...Shadows.sm,
   },
-  shutterButtonOuter: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    borderWidth: 3,
-    borderColor: colors.text,
-    backgroundColor: 'transparent',
+  primaryActionButton: {
+    flex: 1,
+    minHeight: 56,
+    borderRadius: Radius.xl,
+    backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: Spacing.lg,
+    flexDirection: 'row',
+    gap: 10,
+    ...Shadows.sm,
   },
-  shutterButtonDisabled: {
+  primaryActionButtonDisabled: {
     opacity: 0.6,
   },
-  shutterButtonInner: {
-    width: 66,
-    height: 66,
-    borderRadius: 33,
-    backgroundColor: colors.text,
-  },
-  loadingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.sm,
-  },
-  loadingText: {
-    ...Typography.bodySmall,
-    color: colors.textSecondary,
-    textAlign: 'center',
+  primaryActionButtonText: {
+    ...Typography.body,
+    color: colors.onPrimary,
+    fontWeight: '900',
   },
   modeHintText: {
     ...Typography.bodySmall,
     color: colors.textTertiary,
     textAlign: 'center',
+    fontWeight: '700',
   },
   pressed: {
     opacity: 0.92,

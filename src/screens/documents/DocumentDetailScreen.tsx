@@ -1,18 +1,22 @@
 // src/screens/documents/DocumentDetailScreen.tsx
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
+import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Image,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Screen } from '../../components/common/Screen';
+import { DocumentBottomActionDock } from '../../components/documents/DocumentBottomActionDock';
+import { DocumentPageStrip } from '../../components/documents/DocumentPageStrip';
 import { DocumentPipelineSummaryCard } from '../../components/documents/DocumentPipelineSummaryCard';
 import { LocalTrustBadge } from '../../components/trust/LocalTrustBadge';
 import {
@@ -22,6 +26,24 @@ import {
   resolveBillingCapabilities,
   type PremiumCapabilityKey,
 } from '../../modules/billing/billing-capabilities';
+import {
+  documentActionLabels,
+  documentDetailCopy,
+  resolveDocumentPlanActionLabel,
+  resolveDocumentPlanHint,
+  resolveDocumentPlanTitle,
+  resolveDocumentPrintDockCaption,
+  resolveDocumentShareDockCaption,
+  resolveDocumentWordDockCaption,
+  resolveExcelOutputCopy,
+  resolveExcelPrimaryActionCopy,
+  resolveNextStepCopy,
+  resolvePdfOutputCopy,
+  resolvePdfPrimaryActionCopy,
+  resolveShareSummaryCopy,
+  resolveWordOutputCopy,
+  resolveWordPrimaryActionCopy,
+} from '../../modules/documents/document-action-copy';
 import type {
   DocumentAuditEntry,
   DocumentAuditStatus,
@@ -52,9 +74,11 @@ import {
   translateDocumentTextToTurkish,
   type DocumentDetail,
 } from '../../modules/documents/document.service';
+import { getTranslationRuntimeDisplayLabel } from '../../modules/translation/translation-runtime-config.service';
 import type { RootScreenProps } from '../../navigation/types';
 import { useBillingStore } from '../../store/useBillingStore';
 import {
+  Layout,
   Radius,
   Shadows,
   Spacing,
@@ -69,12 +93,15 @@ type ActionKey =
   | 'pdf'
   | 'word'
   | 'excel'
-  | 'translate';
+  | 'translate'
+  | 'share_pdf'
+  | 'share_word';
 
 type TranslationPreview = {
   text: string;
   translatedAt: string;
   sourceLanguage: string | null;
+  provider: string;
 };
 
 function formatDateTime(value: string | null | undefined) {
@@ -232,6 +259,56 @@ function ActionButton({
   );
 }
 
+function OutputStatusRow({
+  title,
+  description,
+  badgeLabel,
+  badgeTone,
+  actionLabel,
+  actionDisabled,
+  actionLoading,
+  onPress,
+}: {
+  title: string;
+  description: string;
+  badgeLabel: string;
+  badgeTone: 'default' | 'success' | 'accent' | 'muted' | 'danger' | 'warning';
+  actionLabel?: string | null;
+  actionDisabled?: boolean;
+  actionLoading?: boolean;
+  onPress?: () => void;
+}) {
+  return (
+    <View style={styles.outputStatusRow}>
+      <View style={styles.outputStatusTextWrap}>
+        <View style={styles.outputStatusTopRow}>
+          <Text style={styles.outputStatusTitle}>{title}</Text>
+          <InfoBadge label={badgeLabel} tone={badgeTone} />
+        </View>
+        <Text style={styles.outputStatusDescription}>{description}</Text>
+      </View>
+
+      {actionLabel && onPress ? (
+        <Pressable
+          onPress={onPress}
+          disabled={actionDisabled || actionLoading}
+          style={({ pressed }) => [
+            styles.outputActionButton,
+            pressed && !(actionDisabled || actionLoading) && styles.pressed,
+            (actionDisabled || actionLoading) && styles.actionButtonDisabled,
+          ]}
+        >
+          {actionLoading ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <Text style={styles.outputActionButtonText}>{actionLabel}</Text>
+          )}
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 function AuditRow({ item }: { item: DocumentAuditEntry }) {
   const tone = getAuditStatusTone(item.status);
 
@@ -269,6 +346,7 @@ export function DocumentDetailScreen({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [translationPreview, setTranslationPreview] =
     useState<TranslationPreview | null>(null);
+  const [selectedPageIndex, setSelectedPageIndex] = useState(0);
 
   const capabilities = useMemo(
     () =>
@@ -332,6 +410,23 @@ export function DocumentDetailScreen({
     });
   }, [document, navigation]);
 
+  useEffect(() => {
+    setSelectedPageIndex(0);
+  }, [documentId, document?.id]);
+
+  const documentPages = useMemo(
+    () => (document && Array.isArray(document.pages) ? document.pages : []),
+    [document],
+  );
+
+  useEffect(() => {
+    if (selectedPageIndex < documentPages.length) {
+      return;
+    }
+
+    setSelectedPageIndex(0);
+  }, [documentPages.length, selectedPageIndex]);
+
   const pageCount = document ? resolveDocumentPageCount(document) : 0;
   const hasPageBasedDocument = pageCount > 0;
   const statusTone = document ? resolveDocumentStatusTone(document) : 'default';
@@ -347,35 +442,110 @@ export function DocumentDetailScreen({
     ? resolveDocumentThumbnailPath(document)
     : null;
 
+  const selectedPage = documentPages[selectedPageIndex] ?? null;
+  const previewImageUri = selectedPage?.image_path ?? documentThumbnailPath ?? null;
 
-  const pdfActionLabel = documentPdfPath
-    ? 'PDF yeniden üret'
-    : 'PDF üret';
-  const wordActionLabel = documentWordPath
-    ? 'Word yeniden üret'
-    : 'Word dışa aktar';
+  const pdfActionCopy = useMemo(
+    () =>
+      resolvePdfPrimaryActionCopy({
+        billingHydrated,
+        canExport: capabilities.canExportPdf,
+        hasFile: Boolean(documentPdfPath),
+      }),
+    [billingHydrated, capabilities.canExportPdf, documentPdfPath],
+  );
 
-  const pdfActionCaption = !billingHydrated
-    ? 'Premium durumu yükleniyor'
-    : capabilities.canExportPdf
-      ? documentPdfPath
-        ? 'Mevcut PDF çıktısını güncelle'
-        : 'Güncel sayfalardan PDF oluştur'
-      : 'Premium ile PDF kaydetmeyi aç';
+  const wordActionCopy = useMemo(
+    () =>
+      resolveWordPrimaryActionCopy({
+        billingHydrated,
+        canExport: capabilities.canExportWord,
+        hasFile: Boolean(documentWordPath),
+      }),
+    [billingHydrated, capabilities.canExportWord, documentWordPath],
+  );
 
-  const wordActionCaption = !billingHydrated
-    ? 'Premium durumu yükleniyor'
-    : capabilities.canExportWord
-      ? documentWordPath
-        ? 'Mevcut Word çıktısını güncelle'
-        : 'OCR metnini Word olarak hazırla'
-      : 'Premium ile Word kaydetmeyi aç';
+  const excelActionCopy = useMemo(
+    () =>
+      resolveExcelPrimaryActionCopy({
+        billingHydrated,
+        canExport: capabilities.canExportExcel,
+      }),
+    [billingHydrated, capabilities.canExportExcel],
+  );
 
-  const excelActionCaption = !billingHydrated
-    ? 'Premium durumu yükleniyor'
-    : capabilities.canExportExcel
-      ? 'OCR metnini Excel olarak hazırla'
-      : 'Premium ile Excel kaydetmeyi aç';
+  const shareSummary = useMemo(
+    () =>
+      resolveShareSummaryCopy({
+        billingHydrated,
+        canShare: capabilities.canShare,
+        hasPdf: Boolean(documentPdfPath),
+        hasWord: Boolean(documentWordPath),
+      }),
+    [
+      billingHydrated,
+      capabilities.canShare,
+      documentPdfPath,
+      documentWordPath,
+    ],
+  );
+
+  const nextStepCard = useMemo(
+    () =>
+      resolveNextStepCopy({
+        hasPageBasedDocument,
+        hasPdf: Boolean(documentPdfPath),
+        canExportPdf: capabilities.canExportPdf,
+        canShare: capabilities.canShare,
+      }),
+    [
+      capabilities.canExportPdf,
+      capabilities.canShare,
+      documentPdfPath,
+      hasPageBasedDocument,
+    ],
+  );
+
+  const pdfOutputCopy = useMemo(
+    () =>
+      resolvePdfOutputCopy({
+        billingHydrated,
+        canExport: capabilities.canExportPdf,
+        canShare: capabilities.canShare,
+        hasFile: Boolean(documentPdfPath),
+      }),
+    [
+      billingHydrated,
+      capabilities.canExportPdf,
+      capabilities.canShare,
+      documentPdfPath,
+    ],
+  );
+
+  const wordOutputCopy = useMemo(
+    () =>
+      resolveWordOutputCopy({
+        billingHydrated,
+        canExport: capabilities.canExportWord,
+        canShare: capabilities.canShare,
+        hasFile: Boolean(documentWordPath),
+      }),
+    [
+      billingHydrated,
+      capabilities.canExportWord,
+      capabilities.canShare,
+      documentWordPath,
+    ],
+  );
+
+  const excelOutputCopy = useMemo(
+    () =>
+      resolveExcelOutputCopy({
+        billingHydrated,
+        canExport: capabilities.canExportExcel,
+      }),
+    [billingHydrated, capabilities.canExportExcel],
+  );
 
   const safeLogAudit = useCallback(
     async ({
@@ -414,7 +584,7 @@ export function DocumentDetailScreen({
       actionLabel,
     }: {
       capability: PremiumCapabilityKey;
-      actionKey: 'pdf' | 'word' | 'excel';
+      actionKey: ActionKey;
       actionLabel: string;
     }) => {
       const reason = `${getPremiumGateFeatureLabel(
@@ -437,7 +607,7 @@ export function DocumentDetailScreen({
             style: 'cancel',
           },
           {
-            text: "Premium'u gör",
+            text: documentActionLabels.openPremium,
             onPress: () => navigation.navigate('Pricing'),
           },
         ],
@@ -455,7 +625,7 @@ export function DocumentDetailScreen({
       successMetadata,
       onSuccess,
     }: {
-      actionKey: Exclude<ActionKey, 'favorite' | 'editor'>;
+      actionKey: Exclude<ActionKey, 'favorite' | 'editor' | 'share_pdf' | 'share_word'>;
       actionLabel: string;
       run: () => Promise<T>;
       successMessage: (result: T) => string;
@@ -543,6 +713,116 @@ export function DocumentDetailScreen({
     navigation.navigate('Documents');
   }, [navigation]);
 
+  const handleShareFile = useCallback(
+    async ({
+      fileUri,
+      actionKey,
+      actionLabel,
+      mimeType,
+      uti,
+    }: {
+      fileUri: string;
+      actionKey: 'share_pdf' | 'share_word';
+      actionLabel: string;
+      mimeType: string;
+      uti?: string;
+    }) => {
+      if (!billingHydrated) {
+        return;
+      }
+
+      if (!capabilities.canShare) {
+        await handlePremiumGate({
+          capability: 'share',
+          actionKey,
+          actionLabel,
+        });
+        return;
+      }
+
+      setActiveActionKey(actionKey);
+
+      await safeLogAudit({
+        actionKey,
+        actionLabel,
+        status: 'started',
+      });
+
+      try {
+        const available = await Sharing.isAvailableAsync();
+
+        if (!available) {
+          throw new Error('Bu cihazda sistem paylaşımı kullanılamıyor.');
+        }
+
+        await Sharing.shareAsync(fileUri, {
+          dialogTitle: `${documentTitle} paylaş`,
+          mimeType,
+          UTI: uti,
+        });
+
+        await safeLogAudit({
+          actionKey,
+          actionLabel,
+          status: 'completed',
+          metadata: {
+            fileUri,
+            mimeType,
+          },
+        });
+      } catch (error) {
+        const message = getErrorMessage(error, 'Dosya paylaşılamadı.');
+
+        await safeLogAudit({
+          actionKey,
+          actionLabel,
+          status: 'failed',
+          reason: message,
+        });
+
+        Alert.alert('Paylaşım başarısız', message);
+      } finally {
+        setActiveActionKey(null);
+      }
+    },
+    [
+      billingHydrated,
+      capabilities.canShare,
+      documentTitle,
+      handlePremiumGate,
+      safeLogAudit,
+    ],
+  );
+
+  const handleSharePdf = useCallback(async () => {
+    if (!documentPdfPath) {
+      return;
+    }
+
+    await handleShareFile({
+      fileUri: documentPdfPath,
+      actionKey: 'share_pdf',
+      actionLabel: documentActionLabels.share,
+      mimeType: 'application/pdf',
+      uti: 'com.adobe.pdf',
+    });
+  }, [documentPdfPath, handleShareFile]);
+
+  const handleShareWord = useCallback(async () => {
+    if (!documentWordPath) {
+      return;
+    }
+
+    await handleShareFile({
+      fileUri: documentWordPath,
+      actionKey: 'share_word',
+      actionLabel: documentActionLabels.share,
+      mimeType:
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      uti: 'org.openxmlformats.wordprocessingml.document',
+    });
+  }, [documentWordPath, handleShareFile]);
+
   const handleRunOcr = useCallback(async () => {
     if (!document || !hasPageBasedDocument) {
       return;
@@ -550,7 +830,7 @@ export function DocumentDetailScreen({
 
     await runAuditedAction({
       actionKey: 'ocr',
-      actionLabel: 'OCR çıkar',
+      actionLabel: documentActionLabels.ocr,
       run: () => extractDocumentText(document.id),
       successMessage: (result) =>
         `${result.extractedPageCount} sayfadan metin çıkarıldı.`,
@@ -574,14 +854,14 @@ export function DocumentDetailScreen({
       await handlePremiumGate({
         capability: 'export_pdf',
         actionKey: 'pdf',
-        actionLabel: pdfActionLabel,
+        actionLabel: pdfActionCopy.label,
       });
       return;
     }
 
     await runAuditedAction({
       actionKey: 'pdf',
-      actionLabel: pdfActionLabel,
+      actionLabel: pdfActionCopy.label,
       run: () => exportDocumentToPdf(document.id),
       successMessage: () =>
         documentPdfPath ? 'PDF yeniden oluşturuldu.' : 'PDF çıktısı oluşturuldu.',
@@ -597,7 +877,7 @@ export function DocumentDetailScreen({
     documentPdfPath,
     handlePremiumGate,
     hasPageBasedDocument,
-    pdfActionLabel,
+    pdfActionCopy.label,
     runAuditedAction,
   ]);
 
@@ -614,14 +894,14 @@ export function DocumentDetailScreen({
       await handlePremiumGate({
         capability: 'export_word',
         actionKey: 'word',
-        actionLabel: wordActionLabel,
+        actionLabel: wordActionCopy.label,
       });
       return;
     }
 
     await runAuditedAction({
       actionKey: 'word',
-      actionLabel: wordActionLabel,
+      actionLabel: wordActionCopy.label,
       run: () => exportDocumentToWord(document.id),
       successMessage: (result) =>
         documentWordPath
@@ -641,7 +921,7 @@ export function DocumentDetailScreen({
     handlePremiumGate,
     hasPageBasedDocument,
     runAuditedAction,
-    wordActionLabel,
+    wordActionCopy.label,
   ]);
 
   const handleExportExcel = useCallback(async () => {
@@ -657,14 +937,14 @@ export function DocumentDetailScreen({
       await handlePremiumGate({
         capability: 'export_excel',
         actionKey: 'excel',
-        actionLabel: 'Excel dışa aktar',
+        actionLabel: excelActionCopy.label,
       });
       return;
     }
 
     await runAuditedAction({
       actionKey: 'excel',
-      actionLabel: 'Excel dışa aktar',
+      actionLabel: excelActionCopy.label,
       run: () => exportDocumentToExcel(document.id),
       successMessage: (result) => `${result.fileName} hazır.`,
       successMetadata: (result) => ({
@@ -676,6 +956,7 @@ export function DocumentDetailScreen({
     billingHydrated,
     capabilities.canExportExcel,
     document,
+    excelActionCopy.label,
     handlePremiumGate,
     hasPageBasedDocument,
     runAuditedAction,
@@ -688,10 +969,11 @@ export function DocumentDetailScreen({
 
     await runAuditedAction({
       actionKey: 'translate',
-      actionLabel: 'Türkçeye çevir',
+      actionLabel: documentActionLabels.translate,
       run: () => translateDocumentTextToTurkish(document.id),
       successMessage: () => 'Türkçe çeviri hazır.',
       successMetadata: (result) => ({
+        provider: result.provider,
         sourceLanguage: result.sourceLanguage,
         translatedLength: result.translatedText.length,
       }),
@@ -700,10 +982,29 @@ export function DocumentDetailScreen({
           text: result.translatedText,
           translatedAt: result.translatedAt,
           sourceLanguage: result.sourceLanguage,
+          provider: getTranslationRuntimeDisplayLabel(result.provider),
         });
       },
     });
   }, [document, hasPageBasedDocument, runAuditedAction]);
+
+  const handlePrimaryShare = useCallback(async () => {
+    if (documentPdfPath) {
+      await handleSharePdf();
+      return;
+    }
+
+    await handleExportPdf();
+  }, [documentPdfPath, handleExportPdf, handleSharePdf]);
+
+  const handlePrintSurface = useCallback(async () => {
+    if (documentPdfPath) {
+      await handleSharePdf();
+      return;
+    }
+
+    await handleExportPdf();
+  }, [documentPdfPath, handleExportPdf, handleSharePdf]);
 
   const pipelineSummary = useMemo(
     () =>
@@ -727,67 +1028,149 @@ export function DocumentDetailScreen({
     ],
   );
 
-  return (
-    <Screen
-      title="Belge Detayı"
-      subtitle="Belgeyi incele, devam et ve son işlemleri yönet."
-    >
-      {loading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.loadingText}>Belge detayı yükleniyor...</Text>
-        </View>
-      ) : errorMessage || !document ? (
-        <View style={styles.errorCard}>
-          <View style={styles.errorIconWrap}>
-            <Ionicons
-              name="alert-circle-outline"
-              size={24}
-              color="#F87171"
-            />
-          </View>
-          <Text style={styles.errorTitle}>Belge açılamadı</Text>
-          <Text style={styles.errorText}>
-            {errorMessage ?? 'Belge kaydı bulunamadı.'}
-          </Text>
+  const dockActions = useMemo(
+    () => [
+      {
+        key: 'edit',
+        label: documentActionLabels.edit,
+        caption: documentDetailCopy.dockEditCaption,
+        icon: 'create-outline' as const,
+        onPress: handleOpenEditor,
+        disabled: !hasPageBasedDocument || activeActionKey !== null,
+        variant: 'primary' as const,
+      },
+      {
+        key: 'share',
+        label: documentActionLabels.share,
+        caption: resolveDocumentShareDockCaption(Boolean(documentPdfPath)),
+        icon: 'share-social-outline' as const,
+        onPress: () => {
+          void handlePrimaryShare();
+        },
+        disabled:
+          !hasPageBasedDocument || activeActionKey !== null || !billingHydrated,
+        loading: activeActionKey === 'pdf' || activeActionKey === 'share_pdf',
+      },
+      {
+        key: 'word',
+        label: documentActionLabels.word,
+        caption: resolveDocumentWordDockCaption(Boolean(documentWordPath)),
+        icon: 'document-text-outline' as const,
+        onPress: () => {
+          void handleExportWord();
+        },
+        disabled:
+          !hasPageBasedDocument || activeActionKey !== null || !billingHydrated,
+        loading: activeActionKey === 'word',
+      },
+      {
+        key: 'print',
+        label: documentActionLabels.print,
+        caption: resolveDocumentPrintDockCaption(Boolean(documentPdfPath)),
+        icon: 'print-outline' as const,
+        onPress: () => {
+          void handlePrintSurface();
+        },
+        disabled:
+          !hasPageBasedDocument || activeActionKey !== null || !billingHydrated,
+        loading: activeActionKey === 'pdf' || activeActionKey === 'share_pdf',
+      },
+    ],
+    [
+      activeActionKey,
+      billingHydrated,
+      documentPdfPath,
+      documentWordPath,
+      handleExportWord,
+      handleOpenEditor,
+      handlePrimaryShare,
+      handlePrintSurface,
+      hasPageBasedDocument,
+    ],
+  );
 
-          <Pressable
-            onPress={() => void loadData(true)}
-            style={({ pressed }) => [
-              styles.primaryButton,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Text style={styles.primaryButtonText}>Tekrar dene</Text>
-          </Pressable>
-        </View>
-      ) : (
-        <>
-          <View style={styles.heroCard}>
-            <View style={styles.heroHeader}>
-              <View style={styles.thumbnailFrame}>
-                {documentThumbnailPath ? (
+  return (
+    <SafeAreaView style={styles.safeArea} edges={['left', 'right', 'bottom']}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        contentInsetAdjustmentBehavior="automatic"
+      >
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={styles.loadingText}>{documentDetailCopy.loading}</Text>
+          </View>
+        ) : errorMessage || !document ? (
+          <View style={styles.errorCard}>
+            <View style={styles.errorIconWrap}>
+              <Ionicons
+                name="alert-circle-outline"
+                size={24}
+                color="#F87171"
+              />
+            </View>
+            <Text style={styles.errorTitle}>{documentDetailCopy.errorTitle}</Text>
+            <Text style={styles.errorText}>
+              {errorMessage ?? 'Belge kaydı bulunamadı.'}
+            </Text>
+
+            <Pressable
+              onPress={() => void loadData(true)}
+              style={({ pressed }) => [
+                styles.primaryButton,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={styles.primaryButtonText}>
+                {documentDetailCopy.retry}
+              </Text>
+            </Pressable>
+          </View>
+        ) : (
+          <>
+            <View style={styles.previewCard}>
+              <View style={styles.previewFrame}>
+                {previewImageUri ? (
                   <Image
-                    source={{ uri: documentThumbnailPath }}
-                    style={styles.thumbnail}
+                    source={{ uri: previewImageUri }}
+                    resizeMode="cover"
+                    style={styles.previewImage}
                   />
                 ) : (
-                  <View style={styles.thumbnailPlaceholder}>
+                  <View style={styles.previewPlaceholder}>
                     <Ionicons
                       name="document-text-outline"
-                      size={26}
+                      size={32}
                       color={colors.textTertiary}
                     />
-                    <Text style={styles.thumbnailPlaceholderText}>
-                      Önizleme yok
+                    <Text style={styles.previewPlaceholderText}>
+                      {documentDetailCopy.previewEmpty}
                     </Text>
                   </View>
                 )}
+
+                <View style={styles.previewFloatingBadge}>
+                  <Text style={styles.previewFloatingBadgeText}>
+                    {selectedPage
+                      ? `Sayfa ${selectedPageIndex + 1}`
+                      : hasPageBasedDocument
+                        ? `${pageCount} sayfa`
+                        : 'Belge önizleme'}
+                  </Text>
+                </View>
               </View>
 
-              <View style={styles.heroContent}>
-                <View style={styles.heroTitleRow}>
-                  <Text style={styles.heroTitle}>{documentTitle}</Text>
+              <View style={styles.previewMetaSection}>
+                <View style={styles.previewTopRow}>
+                  <View style={styles.previewTitleWrap}>
+                    <Text style={styles.previewTitle}>{documentTitle}</Text>
+                    <Text style={styles.previewSubtitle}>
+                      Güncellendi: {formatDateTime(documentUpdatedAt)}
+                    </Text>
+                  </View>
 
                   <Pressable
                     onPress={() => void handleToggleFavorite()}
@@ -810,10 +1193,6 @@ export function DocumentDetailScreen({
                   </Pressable>
                 </View>
 
-                <Text style={styles.heroMeta}>
-                  Güncellendi: {formatDateTime(documentUpdatedAt)}
-                </Text>
-
                 <View style={styles.badgeRow}>
                   <InfoBadge
                     label={resolveDocumentStatusLabel(document)}
@@ -825,391 +1204,449 @@ export function DocumentDetailScreen({
                     icon="layers-outline"
                   />
                   <InfoBadge
-                    label="LOCAL"
+                    label={documentDetailCopy.localBadge}
                     tone="muted"
                     icon="shield-checkmark-outline"
                   />
                   {favorite ? (
-                    <InfoBadge label="Favori" tone="success" icon="star" />
+                    <InfoBadge
+                      label={documentDetailCopy.favoriteBadge}
+                      tone="success"
+                      icon="star"
+                    />
                   ) : null}
                   {documentPdfPath ? (
-                    <InfoBadge label="PDF Kayıtlı" tone="success" />
+                    <InfoBadge
+                      label={documentDetailCopy.pdfSavedBadge}
+                      tone="success"
+                    />
                   ) : null}
                   {documentWordPath ? (
-                    <InfoBadge label="WORD Kayıtlı" tone="accent" />
+                    <InfoBadge
+                      label={documentDetailCopy.wordSavedBadge}
+                      tone="accent"
+                    />
                   ) : null}
                   {document.collection_name ? (
                     <InfoBadge label={document.collection_name} tone="default" />
                   ) : null}
-                  {document.tag_names.map((tag) => (
+                  {document.tag_names?.map((tag) => (
                     <InfoBadge key={tag} label={`#${tag}`} tone="default" />
                   ))}
+                </View>
+
+                <LocalTrustBadge compact />
+              </View>
+            </View>
+
+            {documentPages.length > 0 ? (
+              <DocumentPageStrip
+                title="Sayfalar"
+                subtitle="Dokun ve büyük önizlemeyi değiştir"
+                items={documentPages.map((page, index) => ({
+                  key: String(page.id),
+                  label: `Sayfa ${index + 1}`,
+                  imageUri: page.image_path,
+                  isActive: selectedPageIndex === index,
+                  badge: page.page_order !== index ? `${page.page_order + 1}` : null,
+                  onPress: () => setSelectedPageIndex(index),
+                }))}
+              />
+            ) : null}
+
+            <DocumentBottomActionDock actions={dockActions} />
+
+            {pipelineSummary ? (
+              <DocumentPipelineSummaryCard
+                title={pipelineSummary.title}
+                subtitle={pipelineSummary.subtitle}
+                message={pipelineSummary.message}
+                tone={pipelineSummary.tone}
+                icon={pipelineSummary.icon}
+                stats={pipelineSummary.stats}
+                actions={pipelineSummary.actions}
+              />
+            ) : null}
+
+            <View style={styles.nextStepCard}>
+              <View style={styles.nextStepHeader}>
+                <View style={styles.nextStepIconWrap}>
+                  <Ionicons
+                    name={
+                      nextStepCard.tone === 'success'
+                        ? 'checkmark-circle-outline'
+                        : nextStepCard.tone === 'accent'
+                          ? 'arrow-forward-circle-outline'
+                          : 'alert-circle-outline'
+                    }
+                    size={20}
+                    color={
+                      nextStepCard.tone === 'success'
+                        ? colors.primary
+                        : nextStepCard.tone === 'accent'
+                          ? '#60A5FA'
+                          : '#FBBF24'
+                    }
+                  />
+                </View>
+                <View style={styles.nextStepTextWrap}>
+                  <Text style={styles.nextStepTitle}>{nextStepCard.title}</Text>
+                  <Text style={styles.nextStepText}>{nextStepCard.text}</Text>
                 </View>
               </View>
             </View>
 
-            <LocalTrustBadge />
-          </View>
+            <View style={styles.planCard}>
+              <View style={styles.planHeader}>
+                <View style={styles.planTextWrap}>
+                  <Text style={styles.planTitle}>
+                    {resolveDocumentPlanTitle(isPro)}
+                  </Text>
+                  <Text style={styles.planText}>
+                    Plan: {getBillingPlanLabel(plan)}
+                    {expiresAt ? ` • Bitiş: ${formatDateTime(expiresAt)}` : ''}
+                  </Text>
+                </View>
 
-          {pipelineSummary ? (
-            <DocumentPipelineSummaryCard
-              title={pipelineSummary.title}
-              subtitle={pipelineSummary.subtitle}
-              message={pipelineSummary.message}
-              tone={pipelineSummary.tone}
-              icon={pipelineSummary.icon}
-              stats={pipelineSummary.stats}
-              actions={pipelineSummary.actions}
-            />
-          ) : null}
-
-          <View style={styles.planCard}>
-            <View style={styles.planHeader}>
-              <View style={styles.planTextWrap}>
-                <Text style={styles.planTitle}>
-                  {isPro ? 'Premium aktif' : 'Free plan'}
-                </Text>
-                <Text style={styles.planText}>
-                  Plan: {getBillingPlanLabel(plan)}
-                  {expiresAt ? ` • Bitiş: ${formatDateTime(expiresAt)}` : ''}
-                </Text>
-              </View>
-
-              <Pressable
-                onPress={() => navigation.navigate('Pricing')}
-                style={({ pressed }) => [
-                  styles.planActionButton,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <Text style={styles.planActionButtonText}>
-                  {isPro ? 'Planı gör' : "Premium'u gör"}
-                </Text>
-              </Pressable>
-            </View>
-
-            {!billingHydrated ? (
-              <View style={styles.inlineLoadingRow}>
-                <ActivityIndicator size="small" color={colors.primary} />
-                <Text style={styles.inlineLoadingText}>
-                  Premium durumu yükleniyor...
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.capabilityRow}>
-                <InfoBadge
-                  label={capabilities.canSave ? 'Kaydetme Açık' : 'Kaydetme Kilitli'}
-                  tone={capabilities.canSave ? 'success' : 'warning'}
-                />
-                <InfoBadge
-                  label={capabilities.canShare ? 'Paylaşma Açık' : 'Paylaşma Kilitli'}
-                  tone={capabilities.canShare ? 'success' : 'warning'}
-                />
-                <InfoBadge
-                  label={capabilities.canRemoveAds ? 'Reklamsız' : 'Reklamlı'}
-                  tone={capabilities.canRemoveAds ? 'success' : 'muted'}
-                />
-              </View>
-            )}
-
-            {!isPro ? (
-              <Text style={styles.planHint}>
-                Free kullanıcı tüm araçları deneyebilir. PDF / Word / Excel
-                kaydetme ve paylaşma premium ile açılır.
-              </Text>
-            ) : (
-              <Text style={styles.planHint}>
-                Premium aktif. Export ve paylaşma yüzeyleri açık.
-              </Text>
-            )}
-          </View>
-
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Hızlı işlemler</Text>
-            {activeActionKey ? (
-              <Text style={styles.sectionHint}>İşlem sürüyor</Text>
-            ) : (
-              <Text style={styles.sectionHint}>Tek dokunuşla devam et</Text>
-            )}
-          </View>
-
-          <View style={styles.actionList}>
-            <ActionButton
-              icon="create-outline"
-              label="Editörde aç"
-              caption="Kaşe, imza ve sayfa düzenine devam et"
-              disabled={!hasPageBasedDocument || activeActionKey !== null}
-              loading={activeActionKey === 'editor'}
-              onPress={handleOpenEditor}
-            />
-            <ActionButton
-              icon="scan-outline"
-              label="OCR çıkar"
-              caption="Sayfalardaki metni algıla"
-              disabled={!hasPageBasedDocument || activeActionKey !== null}
-              loading={activeActionKey === 'ocr'}
-              onPress={() => void handleRunOcr()}
-            />
-            <ActionButton
-              icon="document-outline"
-              label={pdfActionLabel}
-              caption={pdfActionCaption}
-              disabled={
-                !hasPageBasedDocument ||
-                activeActionKey !== null ||
-                !billingHydrated
-              }
-              loading={activeActionKey === 'pdf'}
-              onPress={() => void handleExportPdf()}
-            />
-            <ActionButton
-              icon="document-text-outline"
-              label={wordActionLabel}
-              caption={wordActionCaption}
-              disabled={
-                !hasPageBasedDocument ||
-                activeActionKey !== null ||
-                !billingHydrated
-              }
-              loading={activeActionKey === 'word'}
-              onPress={() => void handleExportWord()}
-            />
-            <ActionButton
-              icon="grid-outline"
-              label="Excel dışa aktar"
-              caption={excelActionCaption}
-              disabled={
-                !hasPageBasedDocument ||
-                activeActionKey !== null ||
-                !billingHydrated
-              }
-              loading={activeActionKey === 'excel'}
-              onPress={() => void handleExportExcel()}
-            />
-            <ActionButton
-              icon="language-outline"
-              label="Türkçeye çevir"
-              caption="Algılanan metni Türkçeye çevir"
-              disabled={!hasPageBasedDocument || activeActionKey !== null}
-              loading={activeActionKey === 'translate'}
-              onPress={() => void handleTranslate()}
-            />
-          </View>
-
-          <View style={styles.outputCard}>
-            <View style={styles.outputHeader}>
-              <Text style={styles.outputTitle}>Kayıt ve export durumu</Text>
-              {!isPro ? (
-                <InfoBadge label="Premium yüzeyi" tone="warning" />
-              ) : (
-                <InfoBadge label="Export açık" tone="success" />
-              )}
-            </View>
-
-            <View style={styles.outputRow}>
-              <Text style={styles.outputLabel}>PDF</Text>
-              {documentPdfPath ? (
-                <InfoBadge label="Hazır" tone="success" />
-              ) : capabilities.canExportPdf ? (
-                <InfoBadge label="Hazır değil" tone="muted" />
-              ) : (
-                <InfoBadge label="Premium gerekli" tone="warning" />
-              )}
-            </View>
-
-            <View style={styles.outputRow}>
-              <Text style={styles.outputLabel}>Word</Text>
-              {documentWordPath ? (
-                <InfoBadge label="Hazır" tone="accent" />
-              ) : capabilities.canExportWord ? (
-                <InfoBadge label="Hazır değil" tone="muted" />
-              ) : (
-                <InfoBadge label="Premium gerekli" tone="warning" />
-              )}
-            </View>
-
-            <View style={styles.outputRow}>
-              <Text style={styles.outputLabel}>Excel</Text>
-              {capabilities.canExportExcel ? (
-                <InfoBadge label="İsteğe bağlı export" tone="accent" />
-              ) : (
-                <InfoBadge label="Premium gerekli" tone="warning" />
-              )}
-            </View>
-
-            <View style={styles.outputRow}>
-              <Text style={styles.outputLabel}>Paylaşma</Text>
-              {capabilities.canShare ? (
-                <InfoBadge label="Açık" tone="success" />
-              ) : (
-                <InfoBadge label="Premium gerekli" tone="warning" />
-              )}
-            </View>
-          </View>
-
-          {document.ocr_text ? (
-            <View style={styles.resultCard}>
-              <View style={styles.resultHeader}>
-                <Text style={styles.resultTitle}>OCR önizleme</Text>
-                <InfoBadge
-                  label={document.ocr_status === 'ready' ? 'Hazır' : 'Bekliyor'}
-                  tone={document.ocr_status === 'ready' ? 'success' : 'muted'}
-                />
-              </View>
-              <Text style={styles.resultMeta}>
-                OCR güncelleme: {formatDateTime(document.ocr_updated_at)}
-              </Text>
-              <Text style={styles.resultText} numberOfLines={8}>
-                {document.ocr_text}
-              </Text>
-            </View>
-          ) : null}
-
-          {translationPreview ? (
-            <View style={styles.resultCard}>
-              <View style={styles.resultHeader}>
-                <Text style={styles.resultTitle}>Türkçe çeviri önizleme</Text>
-                <InfoBadge label="Hazır" tone="accent" />
-              </View>
-              <Text style={styles.resultMeta}>
-                Kaynak dil: {translationPreview.sourceLanguage ?? 'Bilinmiyor'} •{' '}
-                {formatDateTime(translationPreview.translatedAt)}
-              </Text>
-              <Text style={styles.resultText} numberOfLines={10}>
-                {translationPreview.text}
-              </Text>
-            </View>
-          ) : null}
-
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Sayfalar</Text>
-            <Text style={styles.sectionHint}>
-              {hasPageBasedDocument ? `${pageCount} kayıt` : 'Sayfa yok'}
-            </Text>
-          </View>
-
-          {!hasPageBasedDocument ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>Sayfa önizlemesi yok</Text>
-              <Text style={styles.emptyText}>
-                Bu belge sayfa tabanlı değil. Düzenleme akışı için kamera veya
-                görsel tabanlı belge kullan.
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.pageList}>
-              {document.pages.map((page, index) => (
                 <Pressable
-                  key={page.id}
-                  onPress={handleOpenEditor}
-                  disabled={activeActionKey !== null}
+                  onPress={() => navigation.navigate('Pricing')}
                   style={({ pressed }) => [
-                    styles.pageCard,
-                    pressed && activeActionKey === null && styles.pressed,
+                    styles.planActionButton,
+                    pressed && styles.pressed,
                   ]}
                 >
-                  <Image
-                    source={{ uri: page.image_path }}
-                    style={styles.pageThumbnail}
-                  />
-
-                  <View style={styles.pageContent}>
-                    <Text style={styles.pageTitle}>Sayfa {index + 1}</Text>
-                    <Text style={styles.pageMeta}>
-                      Sıra: {page.page_order + 1}
-                    </Text>
-                  </View>
-
-                  <Ionicons
-                    name="chevron-forward"
-                    size={18}
-                    color={colors.textTertiary}
-                  />
+                  <Text style={styles.planActionButtonText}>
+                    {resolveDocumentPlanActionLabel(isPro)}
+                  </Text>
                 </Pressable>
-              ))}
+              </View>
+
+              {!billingHydrated ? (
+                <View style={styles.inlineLoadingRow}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                  <Text style={styles.inlineLoadingText}>
+                    {documentDetailCopy.planLoading}
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.capabilityRow}>
+                  <InfoBadge
+                    label={capabilities.canSave ? 'Kaydetme Açık' : 'Kaydetme Kilitli'}
+                    tone={capabilities.canSave ? 'success' : 'warning'}
+                  />
+                  <InfoBadge
+                    label={
+                      capabilities.canShare ? 'Paylaşma Açık' : 'Paylaşma Kilitli'
+                    }
+                    tone={capabilities.canShare ? 'success' : 'warning'}
+                  />
+                  <InfoBadge
+                    label={capabilities.canRemoveAds ? 'Reklamsız' : 'Reklamlı'}
+                    tone={capabilities.canRemoveAds ? 'success' : 'muted'}
+                  />
+                </View>
+              )}
+
+              <Text style={styles.planHint}>{resolveDocumentPlanHint(isPro)}</Text>
             </View>
-          )}
 
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Son işlemler</Text>
-            <Text style={styles.sectionHint}>{auditEntries.length} kayıt</Text>
-          </View>
-
-          {auditEntries.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>Henüz işlem geçmişi yok</Text>
-              <Text style={styles.emptyText}>
-                OCR, export veya çeviri çalıştırdığında burada son işlemler
-                görünecek.
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>
+                {documentDetailCopy.secondaryActionsTitle}
+              </Text>
+              <Text style={styles.sectionHint}>
+                {activeActionKey
+                  ? documentDetailCopy.secondaryActionsBusyHint
+                  : documentDetailCopy.secondaryActionsHint}
               </Text>
             </View>
-          ) : (
-            <View style={styles.auditList}>
-              {auditEntries.map((item) => (
-                <AuditRow key={item.id} item={item} />
-              ))}
+
+            <View style={styles.actionList}>
+              <ActionButton
+                icon="scan-outline"
+                label={documentActionLabels.ocr}
+                caption={documentDetailCopy.secondaryActionCaptions.ocr}
+                disabled={!hasPageBasedDocument || activeActionKey !== null}
+                loading={activeActionKey === 'ocr'}
+                onPress={() => void handleRunOcr()}
+              />
+              <ActionButton
+                icon="document-outline"
+                label={pdfActionCopy.label}
+                caption={pdfActionCopy.caption}
+                disabled={
+                  !hasPageBasedDocument ||
+                  activeActionKey !== null ||
+                  !billingHydrated
+                }
+                loading={activeActionKey === 'pdf'}
+                onPress={() => void handleExportPdf()}
+              />
+              <ActionButton
+                icon="grid-outline"
+                label={excelActionCopy.label}
+                caption={excelActionCopy.caption}
+                disabled={
+                  !hasPageBasedDocument ||
+                  activeActionKey !== null ||
+                  !billingHydrated
+                }
+                loading={activeActionKey === 'excel'}
+                onPress={() => void handleExportExcel()}
+              />
+              <ActionButton
+                icon="language-outline"
+                label={documentActionLabels.translate}
+                caption={documentDetailCopy.secondaryActionCaptions.translate}
+                disabled={!hasPageBasedDocument || activeActionKey !== null}
+                loading={activeActionKey === 'translate'}
+                onPress={() => void handleTranslate()}
+              />
             </View>
-          )}
-        </>
-      )}
-    </Screen>
+
+            <View style={styles.outputCard}>
+              <View style={styles.outputHeader}>
+                <View style={styles.outputHeaderTextWrap}>
+                  <Text style={styles.outputTitle}>
+                    {documentDetailCopy.outputTitle}
+                  </Text>
+                  <Text style={styles.outputSubtitle}>
+                    {documentDetailCopy.outputSubtitle}
+                  </Text>
+                </View>
+                {!isPro ? (
+                  <InfoBadge
+                    label={documentDetailCopy.outputPremiumBadge}
+                    tone="warning"
+                  />
+                ) : (
+                  <InfoBadge
+                    label={documentDetailCopy.outputOpenBadge}
+                    tone="success"
+                  />
+                )}
+              </View>
+
+              <OutputStatusRow
+                title={pdfOutputCopy.title}
+                description={pdfOutputCopy.description}
+                badgeLabel={pdfOutputCopy.badgeLabel}
+                badgeTone={pdfOutputCopy.badgeTone}
+                actionLabel={pdfOutputCopy.actionLabel}
+                actionDisabled={activeActionKey !== null || !billingHydrated}
+                actionLoading={activeActionKey === 'pdf' || activeActionKey === 'share_pdf'}
+                onPress={
+                  documentPdfPath
+                    ? () => {
+                        void handleSharePdf();
+                      }
+                    : () => {
+                        void handleExportPdf();
+                      }
+                }
+              />
+
+              <OutputStatusRow
+                title={wordOutputCopy.title}
+                description={wordOutputCopy.description}
+                badgeLabel={wordOutputCopy.badgeLabel}
+                badgeTone={wordOutputCopy.badgeTone}
+                actionLabel={wordOutputCopy.actionLabel}
+                actionDisabled={activeActionKey !== null || !billingHydrated}
+                actionLoading={activeActionKey === 'word' || activeActionKey === 'share_word'}
+                onPress={
+                  documentWordPath
+                    ? () => {
+                        void handleShareWord();
+                      }
+                    : () => {
+                        void handleExportWord();
+                      }
+                }
+              />
+
+              <OutputStatusRow
+                title={excelOutputCopy.title}
+                description={excelOutputCopy.description}
+                badgeLabel={excelOutputCopy.badgeLabel}
+                badgeTone={excelOutputCopy.badgeTone}
+                actionLabel={excelOutputCopy.actionLabel}
+                actionDisabled={activeActionKey !== null || !billingHydrated}
+                actionLoading={activeActionKey === 'excel'}
+                onPress={() => {
+                  void handleExportExcel();
+                }}
+              />
+
+              <View style={styles.shareSummaryCard}>
+                <View style={styles.shareSummaryTextWrap}>
+                  <Text style={styles.shareSummaryTitle}>{shareSummary.title}</Text>
+                  <Text style={styles.shareSummaryText}>{shareSummary.text}</Text>
+                </View>
+                <InfoBadge
+                  label={shareSummary.badgeLabel}
+                  tone={shareSummary.tone}
+                />
+              </View>
+            </View>
+
+            {document.ocr_text ? (
+              <View style={styles.resultCard}>
+                <View style={styles.resultHeader}>
+                  <Text style={styles.resultTitle}>
+                    {documentDetailCopy.ocrPreviewTitle}
+                  </Text>
+                  <InfoBadge
+                    label={
+                      document.ocr_status === 'ready'
+                        ? documentDetailCopy.resultReadyBadge
+                        : documentDetailCopy.resultWaitingBadge
+                    }
+                    tone={document.ocr_status === 'ready' ? 'success' : 'muted'}
+                  />
+                </View>
+                <Text style={styles.resultMeta}>
+                  OCR güncelleme: {formatDateTime(document.ocr_updated_at)}
+                </Text>
+                <Text style={styles.resultText} numberOfLines={8}>
+                  {document.ocr_text}
+                </Text>
+              </View>
+            ) : null}
+
+            {translationPreview ? (
+              <View style={styles.resultCard}>
+                <View style={styles.resultHeader}>
+                  <Text style={styles.resultTitle}>
+                    {documentDetailCopy.translationPreviewTitle}
+                  </Text>
+                  <InfoBadge
+                    label={documentDetailCopy.resultReadyBadge}
+                    tone="accent"
+                  />
+                </View>
+                <Text style={styles.resultMeta}>
+                  Kaynak dil: {translationPreview.sourceLanguage ?? 'Bilinmiyor'} •{' '}
+                  Sağlayıcı: {translationPreview.provider} •{' '}
+                  {formatDateTime(translationPreview.translatedAt)}
+                </Text>
+                <Text style={styles.resultText} numberOfLines={10}>
+                  {translationPreview.text}
+                </Text>
+              </View>
+            ) : null}
+
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>
+                {documentDetailCopy.recentActionsTitle}
+              </Text>
+              <Text style={styles.sectionHint}>
+                {documentDetailCopy.historyCount(auditEntries.length)}
+              </Text>
+            </View>
+
+            {auditEntries.length === 0 ? (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyTitle}>
+                  {documentDetailCopy.recentActionsEmptyTitle}
+                </Text>
+                <Text style={styles.emptyText}>
+                  {documentDetailCopy.recentActionsEmptyText}
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.auditList}>
+                {auditEntries.map((item) => (
+                  <AuditRow key={item.id} item={item} />
+                ))}
+              </View>
+            )}
+          </>
+        )}
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  heroCard: {
+  safeArea: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  scroll: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  content: {
+    paddingHorizontal: Layout.screenHorizontalPadding,
+    paddingTop: Layout.screenVerticalPadding,
+    paddingBottom: Spacing['3xl'],
+    gap: Spacing.lg,
+  },
+  previewCard: {
     backgroundColor: colors.card,
     borderColor: colors.border,
     borderWidth: 1,
     borderRadius: Radius.xl,
-    padding: Spacing.lg,
-    gap: Spacing.md,
-    marginBottom: Spacing.lg,
+    overflow: 'hidden',
     ...Shadows.sm,
   },
-  heroHeader: {
-    flexDirection: 'row',
-    gap: Spacing.md,
-    alignItems: 'flex-start',
-  },
-  thumbnailFrame: {
-    width: 96,
-    height: 128,
-    borderRadius: Radius.lg,
-    overflow: 'hidden',
+  previewFrame: {
+    height: 340,
     backgroundColor: '#0F141B',
+    position: 'relative',
   },
-  thumbnail: {
+  previewImage: {
     width: '100%',
     height: '100%',
   },
-  thumbnailPlaceholder: {
+  previewPlaceholder: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    paddingHorizontal: 8,
   },
-  thumbnailPlaceholderText: {
+  previewPlaceholderText: {
+    ...Typography.bodySmall,
     color: colors.textTertiary,
-    fontSize: 11,
-    fontWeight: '600',
-    textAlign: 'center',
   },
-  heroContent: {
-    flex: 1,
-    gap: 8,
+  previewFloatingBadge: {
+    position: 'absolute',
+    left: Spacing.md,
+    bottom: Spacing.md,
+    minHeight: 30,
+    borderRadius: Radius.full,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(11, 15, 20, 0.18)',
+    backgroundColor: 'rgba(11, 15, 20, 0.78)',
   },
-  heroTitleRow: {
+  previewFloatingBadgeText: {
+    ...Typography.caption,
+    color: colors.text,
+    fontWeight: '800',
+  },
+  previewMetaSection: {
+    padding: Spacing.lg,
+    gap: Spacing.md,
+  },
+  previewTopRow: {
     flexDirection: 'row',
     gap: Spacing.sm,
     alignItems: 'flex-start',
   },
-  heroTitle: {
+  previewTitleWrap: {
     flex: 1,
+    gap: 4,
+  },
+  previewTitle: {
     ...Typography.titleLarge,
     color: colors.text,
-    lineHeight: 28,
+  },
+  previewSubtitle: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
   },
   favoriteButton: {
     width: 40,
@@ -1220,10 +1657,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  heroMeta: {
-    ...Typography.bodySmall,
-    color: colors.textSecondary,
   },
   badgeRow: {
     flexDirection: 'row',
@@ -1283,31 +1716,40 @@ const styles = StyleSheet.create({
   infoBadgeTextWarning: {
     color: '#FBBF24',
   },
-  noticeCard: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-    borderRadius: Radius.lg,
+  nextStepCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
     borderWidth: 1,
-    borderColor: 'rgba(59, 130, 246, 0.24)',
-    backgroundColor: 'rgba(59, 130, 246, 0.08)',
-    padding: Spacing.md,
+    borderRadius: Radius.xl,
+    padding: Spacing.lg,
+    gap: Spacing.md,
+    ...Shadows.sm,
   },
-  noticeIconWrap: {
-    paddingTop: 2,
+  nextStepHeader: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    alignItems: 'flex-start',
   },
-  noticeTextWrap: {
+  nextStepIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  nextStepTextWrap: {
     flex: 1,
     gap: 4,
   },
-  noticeTitle: {
+  nextStepTitle: {
+    ...Typography.titleSmall,
     color: colors.text,
-    fontWeight: '800',
-    fontSize: 14,
   },
-  noticeText: {
+  nextStepText: {
+    ...Typography.bodySmall,
     color: colors.textSecondary,
     lineHeight: 20,
-    fontSize: 13,
   },
   planCard: {
     backgroundColor: colors.card,
@@ -1316,7 +1758,6 @@ const styles = StyleSheet.create({
     borderRadius: Radius.xl,
     padding: Spacing.lg,
     gap: Spacing.md,
-    marginBottom: Spacing.lg,
     ...Shadows.sm,
   },
   planHeader: {
@@ -1375,7 +1816,6 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     justifyContent: 'space-between',
     gap: Spacing.md,
-    marginBottom: Spacing.sm,
   },
   sectionTitle: {
     ...Typography.titleLarge,
@@ -1387,7 +1827,6 @@ const styles = StyleSheet.create({
   },
   actionList: {
     gap: Spacing.sm,
-    marginBottom: Spacing.lg,
   },
   actionButton: {
     minHeight: 64,
@@ -1433,31 +1872,99 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: Radius.xl,
     padding: Spacing.lg,
-    gap: Spacing.sm,
-    marginBottom: Spacing.lg,
+    gap: Spacing.md,
     ...Shadows.sm,
   },
   outputHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: Spacing.md,
-    marginBottom: 4,
+  },
+  outputHeaderTextWrap: {
+    flex: 1,
+    gap: 4,
   },
   outputTitle: {
     ...Typography.titleSmall,
     color: colors.text,
   },
-  outputRow: {
+  outputSubtitle: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
+  },
+  outputStatusRow: {
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+    padding: Spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+  },
+  outputStatusTextWrap: {
+    flex: 1,
+    gap: 6,
+  },
+  outputStatusTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: Spacing.md,
+    gap: Spacing.sm,
   },
-  outputLabel: {
+  outputStatusTitle: {
+    ...Typography.body,
+    color: colors.text,
+    fontWeight: '800',
+    flex: 1,
+  },
+  outputStatusDescription: {
     ...Typography.bodySmall,
     color: colors.textSecondary,
-    fontWeight: '700',
+    lineHeight: 20,
+  },
+  outputActionButton: {
+    minWidth: 92,
+    minHeight: 42,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.md,
+  },
+  outputActionButtonText: {
+    ...Typography.bodySmall,
+    color: colors.text,
+    fontWeight: '800',
+  },
+  shareSummaryCard: {
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+    padding: Spacing.md,
+    flexDirection: 'row',
+    gap: Spacing.md,
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  },
+  shareSummaryTextWrap: {
+    flex: 1,
+    gap: 4,
+  },
+  shareSummaryTitle: {
+    ...Typography.bodySmall,
+    color: colors.text,
+    fontWeight: '800',
+  },
+  shareSummaryText: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
   },
   resultCard: {
     backgroundColor: colors.card,
@@ -1466,7 +1973,6 @@ const styles = StyleSheet.create({
     borderRadius: Radius.xl,
     padding: Spacing.lg,
     gap: Spacing.sm,
-    marginBottom: Spacing.lg,
     ...Shadows.sm,
   },
   resultHeader: {
@@ -1486,41 +1992,6 @@ const styles = StyleSheet.create({
   resultText: {
     color: colors.text,
     lineHeight: 22,
-  },
-  pageList: {
-    gap: Spacing.sm,
-    marginBottom: Spacing.lg,
-  },
-  pageCard: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: Radius.xl,
-    padding: Spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-    ...Shadows.sm,
-  },
-  pageThumbnail: {
-    width: 54,
-    height: 72,
-    borderRadius: Radius.md,
-    backgroundColor: '#0F141B',
-  },
-  pageContent: {
-    flex: 1,
-    gap: 4,
-  },
-  pageTitle: {
-    color: colors.text,
-    fontWeight: '800',
-    fontSize: 15,
-  },
-  pageMeta: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
   },
   auditList: {
     gap: Spacing.sm,
@@ -1563,7 +2034,6 @@ const styles = StyleSheet.create({
     borderRadius: Radius.xl,
     padding: Spacing.xl,
     gap: Spacing.sm,
-    marginBottom: Spacing.lg,
     ...Shadows.sm,
   },
   emptyTitle: {
