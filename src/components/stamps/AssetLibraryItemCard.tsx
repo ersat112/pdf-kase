@@ -2,10 +2,16 @@ import React from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import {
-    getPreferredAssetPreviewUri,
-    type StoredAsset,
+  getPreferredAssetPreviewUri,
+  type StoredAsset,
 } from '../../modules/assets/asset.service';
-import { Radius, Spacing, Typography, colors } from '../../theme';
+import {
+  Radius,
+  Shadows,
+  Spacing,
+  Typography,
+  colors,
+} from '../../theme';
 
 export function AssetLibraryItemCard({
   asset,
@@ -51,21 +57,22 @@ export function AssetLibraryItemCard({
 
 const styles = StyleSheet.create({
   card: {
-    width: '31%',
-    minWidth: 112,
+    width: '31.6%',
+    minWidth: 116,
     backgroundColor: colors.card,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.xl,
     borderWidth: 1,
     borderColor: colors.border,
     padding: Spacing.md,
     gap: Spacing.sm,
+    ...Shadows.sm,
   },
   cardSelected: {
     borderColor: colors.primary,
-    backgroundColor: 'rgba(53, 199, 111, 0.06)',
+    backgroundColor: colors.primaryMuted,
   },
   previewWrap: {
-    height: 96,
+    height: 108,
     borderRadius: Radius.lg,
     backgroundColor: colors.surfaceElevated,
     borderWidth: 1,
@@ -84,7 +91,8 @@ const styles = StyleSheet.create({
   name: {
     ...Typography.bodySmall,
     color: colors.text,
-    fontWeight: '700',
+    fontWeight: '800',
+    lineHeight: 18,
   },
   meta: {
     ...Typography.caption,

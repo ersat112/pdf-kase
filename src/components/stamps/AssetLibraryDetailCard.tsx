@@ -1,19 +1,25 @@
 import React from 'react';
 import {
-    Image,
-    Pressable,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  Image,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 
 import type { AssetLibraryComparisonPreview } from '../../modules/assets/asset-presentation';
 import {
-    getPreferredAssetPreviewUri,
-    type StoredAsset,
+  getPreferredAssetPreviewUri,
+  type StoredAsset,
 } from '../../modules/assets/asset.service';
-import { Radius, Spacing, Typography, colors } from '../../theme';
+import {
+  Radius,
+  Shadows,
+  Spacing,
+  Typography,
+  colors,
+} from '../../theme';
 
 export type AssetLibraryAction = {
   key: string;
@@ -60,7 +66,12 @@ export function AssetLibraryDetailCard({
 }) {
   return (
     <View style={styles.card}>
-      <Text style={styles.title}>{title}</Text>
+      <View style={styles.header}>
+        <Text style={styles.title}>{title}</Text>
+        <Text style={styles.subtitle}>
+          Seçili varlığı yeniden adlandır, optimize et veya tekrar editör akışında kullan.
+        </Text>
+      </View>
 
       {comparePreview ? (
         <View style={styles.compareCard}>
@@ -117,14 +128,16 @@ export function AssetLibraryDetailCard({
         />
       </View>
 
-      <View style={styles.metaBlock}>
-        <Text style={styles.metaLabel}>Oluşturulma</Text>
-        <Text style={styles.metaValue}>{createdAtLabel}</Text>
-      </View>
+      <View style={styles.metaGrid}>
+        <View style={styles.metaBlock}>
+          <Text style={styles.metaLabel}>Oluşturulma</Text>
+          <Text style={styles.metaValue}>{createdAtLabel}</Text>
+        </View>
 
-      <View style={styles.metaBlock}>
-        <Text style={styles.metaLabel}>Not</Text>
-        <Text style={styles.metaValue}>{note}</Text>
+        <View style={styles.metaBlock}>
+          <Text style={styles.metaLabel}>Not</Text>
+          <Text style={styles.metaValue}>{note}</Text>
+        </View>
       </View>
 
       <View style={styles.actionRow}>
@@ -181,16 +194,27 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     padding: Spacing.lg,
     gap: Spacing.md,
+    ...Shadows.sm,
+  },
+  header: {
+    gap: 4,
   },
   title: {
     ...Typography.titleLarge,
     color: colors.text,
   },
+  subtitle: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
+  },
   preview: {
     width: '100%',
-    height: 180,
+    height: 196,
     borderRadius: Radius.lg,
     backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   compareCard: {
     gap: Spacing.md,
@@ -222,7 +246,7 @@ const styles = StyleSheet.create({
   },
   comparePreview: {
     width: '100%',
-    height: 176,
+    height: 188,
     borderRadius: Radius.lg,
     backgroundColor: colors.surfaceElevated,
     borderWidth: 1,
@@ -245,6 +269,9 @@ const styles = StyleSheet.create({
     ...Typography.caption,
     color: colors.textSecondary,
     fontWeight: '700',
+  },
+  metaGrid: {
+    gap: Spacing.md,
   },
   metaBlock: {
     gap: 6,
