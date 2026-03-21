@@ -7,7 +7,8 @@ const tools: ToolDefinition[] = [
     title: 'Tara',
     shortDescription: 'Kamera ile belge tara ve aynı belgede birleştir.',
     longDescription:
-      'Belge tarama akışı native scanner ile başlar. Taranan sayfalar önce taslak belgeye kaydedilir, sonra düzenleme, kaşe, PDF üretimi ve paylaşım adımlarına aktarılır.',
+      'Belge tarama akışı native scanner ile başlar.\n' +
+      'Taranan sayfalar önce taslak belgeye kaydedilir, sonra düzenleme, kaşe, PDF üretimi ve paylaşım adımlarına aktarılır.',
     availability: 'ready',
     badges: ['Hazır', 'Kamera', 'Belge'],
     primaryActionLabel: 'Taramayı başlat',
@@ -19,8 +20,8 @@ const tools: ToolDefinition[] = [
   {
     key: 'import-images',
     section: 'import',
-    title: 'Görüntüleri İçe Aktar',
-    shortDescription: 'Galeriden çoklu görsel seçip belgeye dönüştürme.',
+    title: 'Galeriden Al',
+    shortDescription: 'Galeriden çoklu görsel seçip belgeye dönüştür.',
     longDescription:
       'Galeriden seçilen tekli veya çoklu görseller sayfa sırasıyla yerel belge taslağına dönüştürülür.',
     availability: 'ready',
@@ -34,10 +35,11 @@ const tools: ToolDefinition[] = [
   {
     key: 'import-files',
     section: 'import',
-    title: 'Dosyaları İçe Aktar',
+    title: 'PDF İçe Aktar',
     shortDescription: 'PDF veya görsel dosyalarını belge havuzuna al.',
     longDescription:
-      'Document picker ile seçilen PDF ve görseller yerel belge havuzuna alınır. Görseller yeni sayfa taslağına, PDF dosyaları ise hazır belge kaydına dönüştürülür.',
+      'Document picker ile seçilen PDF ve görseller yerel belge havuzuna alınır.\n' +
+      'Görseller yeni sayfa taslağına, PDF dosyaları ise hazır belge kaydına dönüştürülür.',
     availability: 'ready',
     badges: ['Hazır', 'PDF', 'Dosya', 'İçe Aktar'],
     primaryActionLabel: 'Dosya seç',
@@ -52,7 +54,8 @@ const tools: ToolDefinition[] = [
     title: 'Word’e',
     shortDescription: 'Belge detayından DOCX çıktısı üretme akışı.',
     longDescription:
-      'Word çıktısı belge detay ekranında oluşturulur. Sayfa görsellerinden OCR metni çıkarılır, ardından yerel DOCX dosyası hazırlanır ve paylaşılabilir.',
+      'Word çıktısı belge detay ekranında oluşturulur.\n' +
+      'Sayfa görsellerinden OCR metni çıkarılır, ardından yerel DOCX dosyası hazırlanır ve paylaşılabilir.',
     availability: 'ready',
     badges: ['Hazır', 'Word', 'OCR'],
     primaryActionLabel: 'Belgelerimi aç',
@@ -70,21 +73,19 @@ const tools: ToolDefinition[] = [
     availability: 'planned',
     badges: ['Akademik', 'Test', 'Tarama'],
     primaryActionLabel: 'İçeriği görüntüle',
-    scanLauncherVisible: true,
   },
   {
     key: 'scan-translate',
     section: 'scan',
     title: 'Çevir',
-    shortDescription: 'OCR metnini belge detayından Türkçeye çevirme akışı.',
+    shortDescription: 'OCR metnini Türkçeye çevirme akışı.',
     longDescription:
-      'Çeviri akışı belge detay ekranında OCR sonrası çalışır. Yabancı dildeki metin Türkçeye çevrilir ve kullanıcı önizlemede sonucu görebilir.',
-    availability: 'ready',
-    badges: ['Hazır', 'Çeviri', 'OCR'],
-    primaryActionLabel: 'Belgelerimi aç',
+      'Çeviri akışı belge detay ekranında OCR sonrası çalışır.\n' +
+      'Public release yerine sonraki iterasyonda resmi bir servis hattı ile tekrar açılacaktır.',
+    availability: 'shell',
+    badges: ['Beta', 'Çeviri', 'OCR'],
+    primaryActionLabel: 'İçeriği görüntüle',
     routeTarget: 'Documents',
-    homeVisible: true,
-    scanLauncherVisible: true,
   },
   {
     key: 'scan-book',
@@ -96,7 +97,6 @@ const tools: ToolDefinition[] = [
     availability: 'planned',
     badges: ['Kitap', 'Sayfa', 'Seri Tarama'],
     primaryActionLabel: 'İçeriği görüntüle',
-    scanLauncherVisible: true,
   },
   {
     key: 'edit-enhance-photo',
@@ -104,7 +104,8 @@ const tools: ToolDefinition[] = [
     title: 'Fotoğrafı İyileştir',
     shortDescription: 'Tarama/görsel iyileştirme akışını başlatır.',
     longDescription:
-      'Bu mod, belge ya da fotoğraf girişini başlatır. Amaç; gelecekte auto-crop, perspective correction ve deskew hattına aynı girişten ulaşmaktır.',
+      'Bu mod, belge ya da fotoğraf girişini başlatır.\n' +
+      'Amaç; gelecekte auto-crop, perspective correction ve deskew hattına aynı girişten ulaşmaktır.',
     availability: 'ready',
     badges: ['Hazır', 'İyileştirme', 'Tarama'],
     primaryActionLabel: 'Akışı aç',
@@ -118,7 +119,8 @@ const tools: ToolDefinition[] = [
     title: 'Akıllı Silme',
     shortDescription: 'Kalem izi, not ve istenmeyen işaretleri temizleme akışı.',
     longDescription:
-      'Akıllı silme sayfa bazında ayrı ekranda çalışır. Kullanıcı silmek istediği alanı işaretler, sonuç lokal olarak yeni sayfa görseline uygulanır ve belge çıktıları geçersizlenir.',
+      'Akıllı silme sayfa bazında ayrı ekranda çalışır.\n' +
+      'Kullanıcı silmek istediği alanı işaretler, sonuç lokal olarak yeni sayfa görseline uygulanır ve belge çıktıları geçersizlenir.',
     availability: 'ready',
     badges: ['Hazır', 'Silme', 'Sayfa'],
     primaryActionLabel: 'Belgelerimi aç',
@@ -132,11 +134,11 @@ const tools: ToolDefinition[] = [
     title: 'CountCam',
     shortDescription: 'Sayım ve görsel sayısallaştırma odaklı kamera modu.',
     longDescription:
-      'CountCam, nesne veya evrak sayımı gibi kamera odaklı sayısal akışlar için ayrıldı. Şu an sadece ürün konumu tanımlı.',
+      'CountCam, nesne veya evrak sayımı gibi kamera odaklı sayısal akışlar için ayrıldı.\n' +
+      'Şu an sadece ürün konumu tanımlı.',
     availability: 'planned',
     badges: ['Kamera', 'Sayım', 'Araç'],
     primaryActionLabel: 'İçeriği görüntüle',
-    scanLauncherVisible: true,
   },
   {
     key: 'utility-qr',
@@ -144,12 +146,14 @@ const tools: ToolDefinition[] = [
     title: 'QR Kodu',
     shortDescription: 'Canlı kameradan QR kod okut.',
     longDescription:
-      'QR modu canlı kamera preview üzerinden sadece QR barkodlarını dinler. Okutulan içerik uygulama içinde gösterilir ve URL ise doğrudan açılabilir.',
+      'QR modu canlı kamera preview üzerinden sadece QR barkodlarını dinler.\n' +
+      'Okutulan içerik uygulama içinde gösterilir ve URL ise doğrudan açılabilir.',
     availability: 'ready',
     badges: ['Hazır', 'QR', 'Kamera'],
     primaryActionLabel: 'QR tarayıcıyı aç',
     routeTarget: 'ScanEntry',
     scanEntryMode: 'qr',
+    homeVisible: true,
     scanLauncherVisible: true,
   },
   {
@@ -158,7 +162,8 @@ const tools: ToolDefinition[] = [
     title: 'İmzala',
     shortDescription: 'Ayrı imza ekranı ile imza oluşturup belgeye ekleme.',
     longDescription:
-      'İmza akışı ayrı signature pad ekranında çalışır. Kaydedilen imza cihazda lokal olarak tutulur ve PDF editörde kaşe mantığıyla belge üstüne yerleştirilip taşınabilir.',
+      'İmza akışı ayrı signature pad ekranında çalışır.\n' +
+      'Kaydedilen imza cihazda lokal olarak tutulur ve PDF editörde kaşe mantığıyla belge üstüne yerleştirilip taşınabilir.',
     availability: 'ready',
     badges: ['Hazır', 'İmza', 'Overlay'],
     primaryActionLabel: 'Belgelerimi aç',
@@ -172,13 +177,13 @@ const tools: ToolDefinition[] = [
     title: 'Kimlik Kartları',
     shortDescription: 'Kimlik ön/arka yüz tarama akışı.',
     longDescription:
-      'Kimlik kartı modu scanner girişini kullanır. Sonraki iterasyonda ön/arka yüz ayrımı, otomatik kenar sabitleme ve tek dosyada birleştirme zenginleştirilecek.',
+      'Kimlik kartı modu scanner girişini kullanır.\n' +
+      'Sonraki iterasyonda ön/arka yüz ayrımı, otomatik kenar sabitleme ve tek dosyada birleştirme zenginleştirilecek.',
     availability: 'ready',
     badges: ['Hazır', 'Kimlik', 'Belge'],
     primaryActionLabel: 'Kimlik taramayı başlat',
     routeTarget: 'ScanEntry',
     scanEntryMode: 'id-card',
-    homeVisible: true,
     scanLauncherVisible: true,
   },
   {
@@ -187,7 +192,8 @@ const tools: ToolDefinition[] = [
     title: 'Metni Çıkar',
     shortDescription: 'Belge detayından gerçek OCR metni çıkarma akışı.',
     longDescription:
-      'OCR işlemi belge detay ekranında çalıştırılır. Sayfa görselleri cihaz üstünde işlenir, metin belgeye kaydedilir ve Word çıktısında tekrar kullanılır.',
+      'OCR işlemi belge detay ekranında çalıştırılır.\n' +
+      'Sayfa görselleri cihaz üstünde işlenir, metin belgeye kaydedilir ve Word çıktısında tekrar kullanılır.',
     availability: 'ready',
     badges: ['Hazır', 'OCR', 'Metin'],
     primaryActionLabel: 'Belgelerimi aç',
@@ -201,7 +207,8 @@ const tools: ToolDefinition[] = [
     title: 'Excel’e',
     shortDescription: 'Belge detayından Excel uyumlu çıktı üretme.',
     longDescription:
-      'Excel çıktısı belge detay ekranında OCR metni üzerinden hazırlanır. Belge özeti ve OCR içeriği Excel uyumlu dosya olarak dışa aktarılır.',
+      'Excel çıktısı belge detay ekranında OCR metni üzerinden hazırlanır.\n' +
+      'Belge özeti ve OCR içeriği Excel uyumlu dosya olarak dışa aktarılır.',
     availability: 'ready',
     badges: ['Hazır', 'Excel', 'OCR'],
     primaryActionLabel: 'Belgelerimi aç',
@@ -215,11 +222,11 @@ const tools: ToolDefinition[] = [
     title: 'Zaman Damgası',
     shortDescription: 'Belgeye tarih/saat damgası ekleme akışı.',
     longDescription:
-      'Zaman damgası modu overlay altyapısı üzerine kurulacak. Belge üstüne tarih-saat ve opsiyonel ek bilgiler basılacak.',
+      'Zaman damgası modu overlay altyapısı üzerine kurulacak.\n' +
+      'Belge üstüne tarih-saat ve opsiyonel ek bilgiler basılacak.',
     availability: 'shell',
     badges: ['Damga', 'Overlay', 'Belge'],
     primaryActionLabel: 'İçeriği görüntüle',
-    scanLauncherVisible: true,
   },
   {
     key: 'scan-id-photo',
@@ -231,8 +238,6 @@ const tools: ToolDefinition[] = [
     availability: 'planned',
     badges: ['Fotoğraf', 'Kimlik', 'Düzenleme'],
     primaryActionLabel: 'İçeriği görüntüle',
-    homeVisible: true,
-    scanLauncherVisible: true,
   },
   {
     key: 'scan-slides',
@@ -244,27 +249,28 @@ const tools: ToolDefinition[] = [
     availability: 'planned',
     badges: ['Sunum', 'Slayt', 'Tarama'],
     primaryActionLabel: 'İçeriği görüntüle',
-    scanLauncherVisible: true,
   },
   {
     key: 'edit-stamp',
     section: 'edit',
-    title: 'Kaşe Ekle',
+    title: 'Kaşe / İmza',
     shortDescription: 'Kaşe kütüphanesi ve yerleştirme akışını açar.',
     longDescription:
-      'Mevcut kaşe yönetimi ekranına gider. Kaşe asset ekleme, optimize etme ve editörde kullanma akışıyla bağlıdır.',
+      'Mevcut kaşe yönetimi ekranına gider.\n' +
+      'Kaşe asset ekleme, optimize etme ve editörde kullanma akışıyla bağlıdır.',
     availability: 'ready',
     badges: ['Hazır', 'Kaşe', 'Overlay'],
     primaryActionLabel: 'Kaşe yönetimini aç',
     routeTarget: 'StampManager',
+    homeVisible: true,
   },
   {
     key: 'utility-tools-hub',
     section: 'utilities',
-    title: 'Tümü',
-    shortDescription: 'Tüm araçları ve modülleri aç.',
+    title: 'Tüm Araçlar',
+    shortDescription: 'Tüm aktif araçları tek merkezden aç.',
     longDescription:
-      'Araç merkezi, tüm modüllerin durumunu, içerik detayını ve aksiyon davranışını tek registry üzerinden sunar.',
+      'Araç merkezi, ürün içinde gerçekten aktif olan araçları tek registry üzerinden sunar.',
     availability: 'ready',
     badges: ['Araçlar', 'Merkez', 'Katalog'],
     primaryActionLabel: 'Araç merkezini aç',
@@ -273,15 +279,17 @@ const tools: ToolDefinition[] = [
   },
 ];
 
+function isPublicTool(item: ToolDefinition) {
+  return item.availability === 'ready' && item.key !== 'utility-tools-hub';
+}
+
+const publicTools = tools.filter(isPublicTool);
+
 export const homeQuickActionKeys = [
   'scan-camera',
   'import-files',
   'import-images',
   'edit-stamp',
-  'scan-ocr-text',
-  'scan-translate',
-  'convert-word',
-  'convert-excel',
 ] as const;
 
 export const homePrimaryActionKeys = [
@@ -293,10 +301,10 @@ export const homePrimaryActionKeys = [
 
 export const homeSecondaryToolKeys = [
   'scan-ocr-text',
-  'scan-translate',
-  'edit-smart-erase',
   'convert-word',
   'convert-excel',
+  'edit-smart-erase',
+  'utility-qr',
   'utility-tools-hub',
 ] as const;
 
@@ -304,21 +312,14 @@ export const scanLauncherKeys = [
   'scan-camera',
   'import-images',
   'import-files',
-  'convert-word',
-  'scan-question-set',
-  'scan-translate',
-  'scan-book',
   'edit-enhance-photo',
   'edit-smart-erase',
-  'scan-count-cam',
   'utility-qr',
   'edit-sign',
   'scan-id-card',
   'scan-ocr-text',
+  'convert-word',
   'convert-excel',
-  'scan-timestamp',
-  'scan-id-photo',
-  'scan-slides',
 ] as const;
 
 export function findToolByKey(key: string) {
@@ -329,31 +330,31 @@ export const toolSections: ToolSectionDefinition[] = [
   {
     key: 'scan',
     title: 'Tara',
-    description: 'Belge, kimlik, kitap ve özel kamera senaryoları.',
-    items: tools.filter((item) => item.section === 'scan'),
+    description: 'Belge ve kimlik için aktif tarama akışları.',
+    items: publicTools.filter((item) => item.section === 'scan'),
   },
   {
     key: 'import',
     title: 'Getir',
     description: 'Galeriden veya dosya sisteminden içerik alma.',
-    items: tools.filter((item) => item.section === 'import'),
+    items: publicTools.filter((item) => item.section === 'import'),
   },
   {
     key: 'convert',
     title: 'Dönüştür',
     description: 'Belgeyi farklı çıktı formatlarına çevir.',
-    items: tools.filter((item) => item.section === 'convert'),
+    items: publicTools.filter((item) => item.section === 'convert'),
   },
   {
     key: 'edit',
     title: 'Düzenle',
     description: 'Belge ve görsel üstünde değişiklik yap.',
-    items: tools.filter((item) => item.section === 'edit'),
+    items: publicTools.filter((item) => item.section === 'edit'),
   },
   {
     key: 'utilities',
     title: 'Yardımcı programlar',
-    description: 'Ek üretkenlik ve yönlendirme araçları.',
-    items: tools.filter((item) => item.section === 'utilities'),
+    description: 'Ek üretkenlik ve tarama yardımcıları.',
+    items: publicTools.filter((item) => item.section === 'utilities'),
   },
 ];
