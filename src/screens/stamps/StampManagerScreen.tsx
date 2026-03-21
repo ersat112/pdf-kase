@@ -17,6 +17,10 @@ import {
 } from '../../components/stamps/AssetLibraryDetailCard';
 import { AssetLibraryItemCard } from '../../components/stamps/AssetLibraryItemCard';
 import {
+  AssetLibraryOverviewStrip,
+  type AssetLibraryOverviewItem,
+} from '../../components/stamps/AssetLibraryOverviewStrip';
+import {
   formatAssetLibraryDate,
   getAssetLibraryComparisonPreview,
   getAssetLibraryHeroCopy,
@@ -40,7 +44,13 @@ import {
 import { prepareStampAssetImage } from '../../modules/imaging/imaging.service';
 import { canUseNativeStampCleanup } from '../../modules/imaging/stamp-cleanup.service';
 import { removeFilesIfExist } from '../../modules/storage/file.service';
-import { colors, Radius, Spacing, Typography } from '../../theme';
+import {
+  colors,
+  Radius,
+  Shadows,
+  Spacing,
+  Typography,
+} from '../../theme';
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message.trim().length > 0
@@ -604,10 +614,111 @@ export function StampManagerScreen() {
     restorable,
   ]);
 
+  const backgroundRemovedCount = useMemo(
+    () =>
+      assets.filter((asset) => {
+        const metadata = parseAssetMetadata(asset.metadata ?? null);
+        return metadata.backgroundRemoved === true;
+      }).length,
+    [assets],
+  );
+
+  const overviewItems = useMemo<AssetLibraryOverviewItem[]>(() => {
+    if (activeType === 'stamp') {
+      return [
+        {
+          key: 'total',
+          title: 'Toplam kaşe',
+          subtitle: 'Kütüphanedeki aktif kaşe sayısı',
+          value: assets.length,
+          icon: 'albums-outline',
+          tone: 'accent',
+        },
+        {
+          key: 'clean',
+          title: 'Temizlenmiş',
+          subtitle: 'Arka planı kaldırılmış sürümler',
+          value: backgroundRemovedCount,
+          icon: 'sparkles-outline',
+          tone: backgroundRemovedCount > 0 ? 'success' : 'default',
+        },
+        {
+          key: 'usage',
+          title: 'Kullanım',
+          subtitle: 'Seçili kaşenin yerleşim adedi',
+          value: selectedAsset ? selectedAssetUsageCount : 0,
+          icon: 'git-compare-outline',
+          tone: selectedAssetUsageCount > 0 ? 'success' : 'default',
+        },
+        {
+          key: 'native',
+          title: 'Cleanup',
+          subtitle: nativeCleanupAvailable ? 'Native modül hazır' : 'Native modül kapalı',
+          value: nativeCleanupAvailable ? 'Hazır' : 'Yok',
+          icon: 'hardware-chip-outline',
+          tone: nativeCleanupAvailable ? 'success' : 'warning',
+        },
+      ];
+    }
+
+    const selectedStrokeCount =
+      typeof selectedAssetMetadata.strokeCount === 'number'
+        ? selectedAssetMetadata.strokeCount
+        : 0;
+
+    const selectedStrokeWidth =
+      typeof selectedAssetMetadata.strokeWidth === 'number'
+        ? selectedAssetMetadata.strokeWidth
+        : 0;
+
+    return [
+      {
+        key: 'total-signatures',
+        title: 'Toplam imza',
+        subtitle: 'Kayıtlı imza thumbnail sayısı',
+        value: assets.length,
+        icon: 'create-outline',
+        tone: 'accent',
+      },
+      {
+        key: 'stroke-count',
+        title: 'Stroke',
+        subtitle: 'Seçili imzanın stroke adedi',
+        value: selectedAsset ? selectedStrokeCount : 0,
+        icon: 'pulse-outline',
+      },
+      {
+        key: 'stroke-width',
+        title: 'Kalınlık',
+        subtitle: 'Kaydedilen imza çizgi kalınlığı',
+        value: selectedAsset ? selectedStrokeWidth : 0,
+        icon: 'remove-outline',
+      },
+      {
+        key: 'latest',
+        title: 'Son eklenen',
+        subtitle: 'Kütüphanedeki son kayıt',
+        value: latestAssetDate === 'Yok' ? 'Yok' : 'Hazır',
+        icon: 'time-outline',
+        tone: latestAssetDate === 'Yok' ? 'warning' : 'success',
+      },
+    ];
+  }, [
+    activeType,
+    assets.length,
+    backgroundRemovedCount,
+    latestAssetDate,
+    nativeCleanupAvailable,
+    selectedAsset,
+    selectedAssetMetadata.strokeCount,
+    selectedAssetMetadata.strokeWidth,
+    selectedAssetUsageCount,
+  ]);
+
   return (
     <Screen
       title="Kaşe & İmzalar"
-      subtitle="Kaşe kütüphanesini ve kaydettiğin imza küçük resimlerini yerel olarak yönet."
+      subtitle="Yerel kütüphaneyi yönet, seçili varlığı düzelt ve editör akışına hazır tut."
     >
       <View style={styles.tabRow}>
         <AssetTabButton
@@ -623,8 +734,17 @@ export function StampManagerScreen() {
       </View>
 
       <View style={styles.heroCard}>
-        <Text style={styles.heroTitle}>{heroCopy.title}</Text>
-        <Text style={styles.heroText}>{heroCopy.description}</Text>
+        <View style={styles.heroHeader}>
+          <View style={styles.heroTextWrap}>
+            <Text style={styles.heroEyebrow}>Varlık kütüphanesi</Text>
+            <Text style={styles.heroTitle}>{heroCopy.title}</Text>
+            <Text style={styles.heroText}>{heroCopy.description}</Text>
+          </View>
+
+          <View style={styles.heroCountPill}>
+            <Text style={styles.heroCountPillText}>{assets.length}</Text>
+          </View>
+        </View>
 
         <View style={styles.heroPillRow}>
           {heroCopy.pills.map((pill) => (
@@ -648,6 +768,8 @@ export function StampManagerScreen() {
           </Pressable>
         ) : null}
       </View>
+
+      <AssetLibraryOverviewStrip items={overviewItems} />
 
       <View style={styles.summaryCard}>
         <View style={styles.summaryTextBlock}>
@@ -686,6 +808,11 @@ export function StampManagerScreen() {
         </View>
       ) : (
         <>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Kütüphane</Text>
+            <Text style={styles.sectionHint}>{assets.length} kayıt</Text>
+          </View>
+
           <View style={styles.grid}>
             {assets.map((asset) => (
               <AssetLibraryItemCard
@@ -732,7 +859,7 @@ const styles = StyleSheet.create({
   },
   tabButton: {
     flex: 1,
-    minHeight: 46,
+    minHeight: 48,
     borderRadius: Radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
@@ -740,10 +867,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: Spacing.md,
+    ...Shadows.sm,
   },
   tabButtonActive: {
     borderColor: colors.primary,
-    backgroundColor: 'rgba(53, 199, 111, 0.12)',
+    backgroundColor: colors.primaryMuted,
   },
   tabButtonText: {
     ...Typography.bodySmall,
@@ -761,6 +889,23 @@ const styles = StyleSheet.create({
     padding: Spacing.lg,
     marginBottom: Spacing.lg,
     gap: Spacing.md,
+    ...Shadows.sm,
+  },
+  heroHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: Spacing.md,
+  },
+  heroTextWrap: {
+    flex: 1,
+    gap: 6,
+  },
+  heroEyebrow: {
+    ...Typography.caption,
+    color: colors.primary,
+    fontWeight: '800',
+    textTransform: 'uppercase',
   },
   heroTitle: {
     ...Typography.titleLarge,
@@ -770,6 +915,21 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: colors.textSecondary,
     lineHeight: 22,
+  },
+  heroCountPill: {
+    minWidth: 48,
+    minHeight: 48,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroCountPillText: {
+    ...Typography.titleSmall,
+    color: colors.text,
+    fontWeight: '900',
   },
   heroPillRow: {
     flexDirection: 'row',
@@ -811,10 +971,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: Radius.xl,
     padding: Spacing.lg,
+    marginTop: Spacing.lg,
     marginBottom: Spacing.lg,
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.md,
+    ...Shadows.sm,
   },
   summaryTextBlock: {
     flex: 1,
@@ -839,6 +1001,7 @@ const styles = StyleSheet.create({
     padding: Spacing.lg,
     marginBottom: Spacing.lg,
     gap: 6,
+    ...Shadows.sm,
   },
   feedbackCardSuccess: {
     backgroundColor: 'rgba(22, 101, 52, 0.14)',
@@ -862,6 +1025,21 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     lineHeight: 20,
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: Spacing.md,
+    marginBottom: Spacing.sm,
+  },
+  sectionTitle: {
+    ...Typography.titleLarge,
+    color: colors.text,
+  },
+  sectionHint: {
+    ...Typography.bodySmall,
+    color: colors.textTertiary,
+  },
   loadingContainer: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -879,6 +1057,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     padding: Spacing.lg,
     gap: Spacing.sm,
+    ...Shadows.sm,
   },
   emptyTitle: {
     ...Typography.titleLarge,
