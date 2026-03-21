@@ -1,6 +1,7 @@
 // src/screens/documents/DocumentDetailScreen.tsx
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
+import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -69,7 +70,9 @@ type ActionKey =
   | 'pdf'
   | 'word'
   | 'excel'
-  | 'translate';
+  | 'translate'
+  | 'share_pdf'
+  | 'share_word';
 
 type TranslationPreview = {
   text: string;
@@ -232,6 +235,56 @@ function ActionButton({
   );
 }
 
+function OutputStatusRow({
+  title,
+  description,
+  badgeLabel,
+  badgeTone,
+  actionLabel,
+  actionDisabled,
+  actionLoading,
+  onPress,
+}: {
+  title: string;
+  description: string;
+  badgeLabel: string;
+  badgeTone: 'default' | 'success' | 'accent' | 'muted' | 'danger' | 'warning';
+  actionLabel?: string | null;
+  actionDisabled?: boolean;
+  actionLoading?: boolean;
+  onPress?: () => void;
+}) {
+  return (
+    <View style={styles.outputStatusRow}>
+      <View style={styles.outputStatusTextWrap}>
+        <View style={styles.outputStatusTopRow}>
+          <Text style={styles.outputStatusTitle}>{title}</Text>
+          <InfoBadge label={badgeLabel} tone={badgeTone} />
+        </View>
+        <Text style={styles.outputStatusDescription}>{description}</Text>
+      </View>
+
+      {actionLabel && onPress ? (
+        <Pressable
+          onPress={onPress}
+          disabled={actionDisabled || actionLoading}
+          style={({ pressed }) => [
+            styles.outputActionButton,
+            pressed && !(actionDisabled || actionLoading) && styles.pressed,
+            (actionDisabled || actionLoading) && styles.actionButtonDisabled,
+          ]}
+        >
+          {actionLoading ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <Text style={styles.outputActionButtonText}>{actionLabel}</Text>
+          )}
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 function AuditRow({ item }: { item: DocumentAuditEntry }) {
   const tone = getAuditStatusTone(item.status);
 
@@ -347,7 +400,6 @@ export function DocumentDetailScreen({
     ? resolveDocumentThumbnailPath(document)
     : null;
 
-
   const pdfActionLabel = documentPdfPath
     ? 'PDF yeniden üret'
     : 'PDF üret';
@@ -376,6 +428,70 @@ export function DocumentDetailScreen({
     : capabilities.canExportExcel
       ? 'OCR metnini Excel olarak hazırla'
       : 'Premium ile Excel kaydetmeyi aç';
+
+  const shareSummary = useMemo(() => {
+    if (!billingHydrated) {
+      return {
+        title: 'Paylaşım hazırlanıyor',
+        text: 'Premium ve paylaşım durumu doğrulanıyor.',
+        tone: 'muted' as const,
+      };
+    }
+
+    if (!capabilities.canShare) {
+      return {
+        title: 'Paylaşım premium ile açılır',
+        text: 'PDF ve Word çıktıları hazır olsa bile paylaşma yüzeyi premium planda aktif olur.',
+        tone: 'warning' as const,
+      };
+    }
+
+    if (documentPdfPath || documentWordPath) {
+      return {
+        title: 'Paylaşmaya hazırsın',
+        text: 'Hazır dosyaları doğrudan sistem paylaşım paneli ile dışarı aktarabilirsin.',
+        tone: 'success' as const,
+      };
+    }
+
+    return {
+      title: 'Önce çıktı üret',
+      text: 'Paylaşım için önce PDF veya Word çıktısı hazırlanmalı.',
+      tone: 'muted' as const,
+    };
+  }, [billingHydrated, capabilities.canShare, documentPdfPath, documentWordPath]);
+
+  const nextStepCard = useMemo(() => {
+    if (!hasPageBasedDocument) {
+      return {
+        title: 'Bu belge düzenleme akışında değil',
+        text: 'Bu kayıt sayfa tabanlı olmadığı için önce görsel tabanlı bir belge ile export akışı kullanılmalı.',
+        tone: 'warning' as const,
+      };
+    }
+
+    if (!documentPdfPath) {
+      return {
+        title: 'Sonraki doğru adım: PDF üret',
+        text: 'Belgeyi paylaşmadan veya dışarı aktarmadan önce güncel sayfalardan PDF oluştur.',
+        tone: capabilities.canExportPdf ? ('accent' as const) : ('warning' as const),
+      };
+    }
+
+    if (!capabilities.canShare) {
+      return {
+        title: 'PDF hazır, paylaşım kilitli',
+        text: 'Dosya hazır. Paylaşmak için premium plan gerekir.',
+        tone: 'warning' as const,
+      };
+    }
+
+    return {
+      title: 'Belge sonuçlandırıldı',
+      text: 'PDF hazır. Şimdi paylaşabilir, Word/Excel çıktısına geçebilir veya editörde son düzenlemeleri yapabilirsin.',
+      tone: 'success' as const,
+    };
+  }, [capabilities.canExportPdf, capabilities.canShare, documentPdfPath, hasPageBasedDocument]);
 
   const safeLogAudit = useCallback(
     async ({
@@ -414,7 +530,7 @@ export function DocumentDetailScreen({
       actionLabel,
     }: {
       capability: PremiumCapabilityKey;
-      actionKey: 'pdf' | 'word' | 'excel';
+      actionKey: ActionKey;
       actionLabel: string;
     }) => {
       const reason = `${getPremiumGateFeatureLabel(
@@ -455,7 +571,7 @@ export function DocumentDetailScreen({
       successMetadata,
       onSuccess,
     }: {
-      actionKey: Exclude<ActionKey, 'favorite' | 'editor'>;
+      actionKey: Exclude<ActionKey, 'favorite' | 'editor' | 'share_pdf' | 'share_word'>;
       actionLabel: string;
       run: () => Promise<T>;
       successMessage: (result: T) => string;
@@ -542,6 +658,116 @@ export function DocumentDetailScreen({
   const handleOpenDocuments = useCallback(() => {
     navigation.navigate('Documents');
   }, [navigation]);
+
+  const handleShareFile = useCallback(
+    async ({
+      fileUri,
+      actionKey,
+      actionLabel,
+      mimeType,
+      uti,
+    }: {
+      fileUri: string;
+      actionKey: 'share_pdf' | 'share_word';
+      actionLabel: string;
+      mimeType: string;
+      uti?: string;
+    }) => {
+      if (!billingHydrated) {
+        return;
+      }
+
+      if (!capabilities.canShare) {
+        await handlePremiumGate({
+          capability: 'share',
+          actionKey,
+          actionLabel,
+        });
+        return;
+      }
+
+      setActiveActionKey(actionKey);
+
+      await safeLogAudit({
+        actionKey,
+        actionLabel,
+        status: 'started',
+      });
+
+      try {
+        const available = await Sharing.isAvailableAsync();
+
+        if (!available) {
+          throw new Error('Bu cihazda sistem paylaşımı kullanılamıyor.');
+        }
+
+        await Sharing.shareAsync(fileUri, {
+          dialogTitle: `${documentTitle} paylaş`,
+          mimeType,
+          UTI: uti,
+        });
+
+        await safeLogAudit({
+          actionKey,
+          actionLabel,
+          status: 'completed',
+          metadata: {
+            fileUri,
+            mimeType,
+          },
+        });
+      } catch (error) {
+        const message = getErrorMessage(error, 'Dosya paylaşılamadı.');
+
+        await safeLogAudit({
+          actionKey,
+          actionLabel,
+          status: 'failed',
+          reason: message,
+        });
+
+        Alert.alert('Paylaşım başarısız', message);
+      } finally {
+        setActiveActionKey(null);
+      }
+    },
+    [
+      billingHydrated,
+      capabilities.canShare,
+      documentTitle,
+      handlePremiumGate,
+      safeLogAudit,
+    ],
+  );
+
+  const handleSharePdf = useCallback(async () => {
+    if (!documentPdfPath) {
+      return;
+    }
+
+    await handleShareFile({
+      fileUri: documentPdfPath,
+      actionKey: 'share_pdf',
+      actionLabel: 'PDF paylaş',
+      mimeType: 'application/pdf',
+      uti: 'com.adobe.pdf',
+    });
+  }, [documentPdfPath, handleShareFile]);
+
+  const handleShareWord = useCallback(async () => {
+    if (!documentWordPath) {
+      return;
+    }
+
+    await handleShareFile({
+      fileUri: documentWordPath,
+      actionKey: 'share_word',
+      actionLabel: 'Word paylaş',
+      mimeType:
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      uti: 'org.openxmlformats.wordprocessingml.document',
+    });
+  }, [documentWordPath, handleShareFile]);
 
   const handleRunOcr = useCallback(async () => {
     if (!document || !hasPageBasedDocument) {
@@ -863,6 +1089,34 @@ export function DocumentDetailScreen({
             />
           ) : null}
 
+          <View style={styles.nextStepCard}>
+            <View style={styles.nextStepHeader}>
+              <View style={styles.nextStepIconWrap}>
+                <Ionicons
+                  name={
+                    nextStepCard.tone === 'success'
+                      ? 'checkmark-circle-outline'
+                      : nextStepCard.tone === 'accent'
+                        ? 'arrow-forward-circle-outline'
+                        : 'alert-circle-outline'
+                  }
+                  size={20}
+                  color={
+                    nextStepCard.tone === 'success'
+                      ? colors.primary
+                      : nextStepCard.tone === 'accent'
+                        ? '#60A5FA'
+                        : '#FBBF24'
+                  }
+                />
+              </View>
+              <View style={styles.nextStepTextWrap}>
+                <Text style={styles.nextStepTitle}>{nextStepCard.title}</Text>
+                <Text style={styles.nextStepText}>{nextStepCard.text}</Text>
+              </View>
+            </View>
+          </View>
+
           <View style={styles.planCard}>
             <View style={styles.planHeader}>
               <View style={styles.planTextWrap}>
@@ -998,7 +1252,12 @@ export function DocumentDetailScreen({
 
           <View style={styles.outputCard}>
             <View style={styles.outputHeader}>
-              <Text style={styles.outputTitle}>Kayıt ve export durumu</Text>
+              <View style={styles.outputHeaderTextWrap}>
+                <Text style={styles.outputTitle}>Export ve paylaşım</Text>
+                <Text style={styles.outputSubtitle}>
+                  Çıktının hazır olup olmadığını gör ve doğru sonraki aksiyonu tek dokunuşla başlat.
+                </Text>
+              </View>
               {!isPro ? (
                 <InfoBadge label="Premium yüzeyi" tone="warning" />
               ) : (
@@ -1006,44 +1265,132 @@ export function DocumentDetailScreen({
               )}
             </View>
 
-            <View style={styles.outputRow}>
-              <Text style={styles.outputLabel}>PDF</Text>
-              {documentPdfPath ? (
-                <InfoBadge label="Hazır" tone="success" />
-              ) : capabilities.canExportPdf ? (
-                <InfoBadge label="Hazır değil" tone="muted" />
-              ) : (
-                <InfoBadge label="Premium gerekli" tone="warning" />
-              )}
-            </View>
+            <OutputStatusRow
+              title="PDF"
+              description={
+                documentPdfPath
+                  ? capabilities.canShare
+                    ? 'PDF hazır. Şimdi doğrudan paylaşabilir veya yeniden üretebilirsin.'
+                    : 'PDF hazır. Paylaşmak için premium plan gerekir.'
+                  : capabilities.canExportPdf
+                    ? 'Henüz PDF oluşturulmadı. Belgeyi sonuçlandırmak için ilk doğru adım budur.'
+                    : 'PDF kaydetme ve paylaşma premium planda açılır.'
+              }
+              badgeLabel={
+                documentPdfPath
+                  ? 'Hazır'
+                  : capabilities.canExportPdf
+                    ? 'Hazır değil'
+                    : 'Premium gerekli'
+              }
+              badgeTone={
+                documentPdfPath
+                  ? 'success'
+                  : capabilities.canExportPdf
+                    ? 'muted'
+                    : 'warning'
+              }
+              actionLabel={
+                documentPdfPath
+                  ? 'Paylaş'
+                  : billingHydrated
+                    ? capabilities.canExportPdf
+                      ? 'PDF üret'
+                      : 'Premium'
+                    : null
+              }
+              actionDisabled={activeActionKey !== null || !billingHydrated}
+              actionLoading={activeActionKey === 'pdf' || activeActionKey === 'share_pdf'}
+              onPress={
+                documentPdfPath
+                  ? () => {
+                      void handleSharePdf();
+                    }
+                  : () => {
+                      void handleExportPdf();
+                    }
+              }
+            />
 
-            <View style={styles.outputRow}>
-              <Text style={styles.outputLabel}>Word</Text>
-              {documentWordPath ? (
-                <InfoBadge label="Hazır" tone="accent" />
-              ) : capabilities.canExportWord ? (
-                <InfoBadge label="Hazır değil" tone="muted" />
-              ) : (
-                <InfoBadge label="Premium gerekli" tone="warning" />
-              )}
-            </View>
+            <OutputStatusRow
+              title="Word"
+              description={
+                documentWordPath
+                  ? capabilities.canShare
+                    ? 'Word çıktısı hazır. İstersen paylaşabilir veya yeniden üretebilirsin.'
+                    : 'Word hazır. Paylaşmak için premium plan gerekir.'
+                  : capabilities.canExportWord
+                    ? 'Word çıktısı OCR metni üzerinden oluşturulur. Gerekiyorsa OCR otomatik hazırlanır.'
+                    : 'Word çıktısı premium planda açılır.'
+              }
+              badgeLabel={
+                documentWordPath
+                  ? 'Hazır'
+                  : capabilities.canExportWord
+                    ? 'Hazır değil'
+                    : 'Premium gerekli'
+              }
+              badgeTone={
+                documentWordPath
+                  ? 'accent'
+                  : capabilities.canExportWord
+                    ? 'muted'
+                    : 'warning'
+              }
+              actionLabel={
+                documentWordPath
+                  ? 'Paylaş'
+                  : billingHydrated
+                    ? capabilities.canExportWord
+                      ? 'Word üret'
+                      : 'Premium'
+                    : null
+              }
+              actionDisabled={activeActionKey !== null || !billingHydrated}
+              actionLoading={activeActionKey === 'word' || activeActionKey === 'share_word'}
+              onPress={
+                documentWordPath
+                  ? () => {
+                      void handleShareWord();
+                    }
+                  : () => {
+                      void handleExportWord();
+                    }
+              }
+            />
 
-            <View style={styles.outputRow}>
-              <Text style={styles.outputLabel}>Excel</Text>
-              {capabilities.canExportExcel ? (
-                <InfoBadge label="İsteğe bağlı export" tone="accent" />
-              ) : (
-                <InfoBadge label="Premium gerekli" tone="warning" />
-              )}
-            </View>
+            <OutputStatusRow
+              title="Excel"
+              description={
+                capabilities.canExportExcel
+                  ? 'Excel çıktısı OCR metni üzerinden oluşturulur. Bu yüzey export üretir; kalıcı paylaşım için önce dosya hazırlığı gerekir.'
+                  : 'Excel çıktısı premium planda açılır.'
+              }
+              badgeLabel={capabilities.canExportExcel ? 'İsteğe bağlı' : 'Premium gerekli'}
+              badgeTone={capabilities.canExportExcel ? 'accent' : 'warning'}
+              actionLabel={billingHydrated ? (capabilities.canExportExcel ? 'Excel üret' : 'Premium') : null}
+              actionDisabled={activeActionKey !== null || !billingHydrated}
+              actionLoading={activeActionKey === 'excel'}
+              onPress={() => {
+                void handleExportExcel();
+              }}
+            />
 
-            <View style={styles.outputRow}>
-              <Text style={styles.outputLabel}>Paylaşma</Text>
-              {capabilities.canShare ? (
-                <InfoBadge label="Açık" tone="success" />
-              ) : (
-                <InfoBadge label="Premium gerekli" tone="warning" />
-              )}
+            <View style={styles.shareSummaryCard}>
+              <View style={styles.shareSummaryTextWrap}>
+                <Text style={styles.shareSummaryTitle}>{shareSummary.title}</Text>
+                <Text style={styles.shareSummaryText}>{shareSummary.text}</Text>
+              </View>
+              <InfoBadge
+                label={
+                  shareSummary.tone === 'success'
+                    ? 'Paylaşılabilir'
+                    : shareSummary.tone === 'warning'
+                      ? 'Kilitli'
+                      : 'Bekliyor'
+                }
+                tone={shareSummary.tone}
+              />
             </View>
           </View>
 
@@ -1283,31 +1630,41 @@ const styles = StyleSheet.create({
   infoBadgeTextWarning: {
     color: '#FBBF24',
   },
-  noticeCard: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-    borderRadius: Radius.lg,
+  nextStepCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
     borderWidth: 1,
-    borderColor: 'rgba(59, 130, 246, 0.24)',
-    backgroundColor: 'rgba(59, 130, 246, 0.08)',
-    padding: Spacing.md,
+    borderRadius: Radius.xl,
+    padding: Spacing.lg,
+    gap: Spacing.md,
+    marginBottom: Spacing.lg,
+    ...Shadows.sm,
   },
-  noticeIconWrap: {
-    paddingTop: 2,
+  nextStepHeader: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    alignItems: 'flex-start',
   },
-  noticeTextWrap: {
+  nextStepIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  nextStepTextWrap: {
     flex: 1,
     gap: 4,
   },
-  noticeTitle: {
+  nextStepTitle: {
+    ...Typography.titleSmall,
     color: colors.text,
-    fontWeight: '800',
-    fontSize: 14,
   },
-  noticeText: {
+  nextStepText: {
+    ...Typography.bodySmall,
     color: colors.textSecondary,
     lineHeight: 20,
-    fontSize: 13,
   },
   planCard: {
     backgroundColor: colors.card,
@@ -1433,31 +1790,100 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: Radius.xl,
     padding: Spacing.lg,
-    gap: Spacing.sm,
+    gap: Spacing.md,
     marginBottom: Spacing.lg,
     ...Shadows.sm,
   },
   outputHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: Spacing.md,
-    marginBottom: 4,
+  },
+  outputHeaderTextWrap: {
+    flex: 1,
+    gap: 4,
   },
   outputTitle: {
     ...Typography.titleSmall,
     color: colors.text,
   },
-  outputRow: {
+  outputSubtitle: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
+  },
+  outputStatusRow: {
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+    padding: Spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+  },
+  outputStatusTextWrap: {
+    flex: 1,
+    gap: 6,
+  },
+  outputStatusTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: Spacing.md,
+    gap: Spacing.sm,
   },
-  outputLabel: {
+  outputStatusTitle: {
+    ...Typography.body,
+    color: colors.text,
+    fontWeight: '800',
+    flex: 1,
+  },
+  outputStatusDescription: {
     ...Typography.bodySmall,
     color: colors.textSecondary,
-    fontWeight: '700',
+    lineHeight: 20,
+  },
+  outputActionButton: {
+    minWidth: 92,
+    minHeight: 42,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.md,
+  },
+  outputActionButtonText: {
+    ...Typography.bodySmall,
+    color: colors.text,
+    fontWeight: '800',
+  },
+  shareSummaryCard: {
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+    padding: Spacing.md,
+    flexDirection: 'row',
+    gap: Spacing.md,
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  },
+  shareSummaryTextWrap: {
+    flex: 1,
+    gap: 4,
+  },
+  shareSummaryTitle: {
+    ...Typography.bodySmall,
+    color: colors.text,
+    fontWeight: '800',
+  },
+  shareSummaryText: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
   },
   resultCard: {
     backgroundColor: colors.card,
