@@ -8,6 +8,14 @@ import {
 } from 'react-native';
 
 import { Screen } from '../../components/common/Screen';
+import {
+  getAuthSessionRuntimeLabel,
+  isMockAuthSession,
+} from '../../modules/auth/auth.service';
+import {
+  getBillingRuntimeLabel,
+  isMockBillingState,
+} from '../../modules/billing/billing.service';
 import { type PdfImageQualityPreset } from '../../modules/imaging/imaging.service';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useBillingStore } from '../../store/useBillingStore';
@@ -90,10 +98,54 @@ function ChoiceChip({
   );
 }
 
+function InfoPill({
+  label,
+  tone = 'default',
+}: {
+  label: string;
+  tone?: 'default' | 'accent' | 'success' | 'warning';
+}) {
+  return (
+    <View
+      style={[
+        styles.infoPill,
+        tone === 'accent' && styles.infoPillAccent,
+        tone === 'success' && styles.infoPillSuccess,
+        tone === 'warning' && styles.infoPillWarning,
+      ]}
+    >
+      <Text
+        style={[
+          styles.infoPillText,
+          tone === 'accent' && styles.infoPillTextAccent,
+          tone === 'success' && styles.infoPillTextSuccess,
+          tone === 'warning' && styles.infoPillTextWarning,
+        ]}
+      >
+        {label}
+      </Text>
+    </View>
+  );
+}
+
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message.trim().length > 0
     ? error.message
     : fallback;
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) {
+    return 'Yok';
+  }
+
+  const parsed = new Date(value);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return 'Geçersiz';
+  }
+
+  return parsed.toLocaleString('tr-TR');
 }
 
 export function SettingsScreen() {
@@ -103,6 +155,7 @@ export function SettingsScreen() {
   const isPro = useBillingStore((state) => state.isPro);
   const plan = useBillingStore((state) => state.plan);
   const expiresAt = useBillingStore((state) => state.expiresAt);
+  const billingMetadata = useBillingStore((state) => state.metadata);
 
   const [busy, setBusy] = useState(false);
 
@@ -141,6 +194,38 @@ export function SettingsScreen() {
     }
   }, [scanQuality]);
 
+  const authRuntimeLabel = useMemo(
+    () => getAuthSessionRuntimeLabel(session),
+    [session],
+  );
+
+  const billingRuntimeLabel = useMemo(
+    () =>
+      getBillingRuntimeLabel({
+        isPro,
+        plan,
+        expiresAt,
+        metadata: billingMetadata,
+      }),
+    [billingMetadata, expiresAt, isPro, plan],
+  );
+
+  const isMockSession = useMemo(() => isMockAuthSession(session), [session]);
+
+  const isMockPremium = useMemo(
+    () =>
+      isMockBillingState({
+        isPro,
+        plan,
+        expiresAt,
+        metadata: billingMetadata,
+      }),
+    [billingMetadata, expiresAt, isPro, plan],
+  );
+
+  const sessionCreatedAt = session?.metadata?.createdAt ?? null;
+  const billingUpdatedAt = billingMetadata?.updatedAt ?? null;
+
   const handleLogout = async () => {
     try {
       setBusy(true);
@@ -160,16 +245,49 @@ export function SettingsScreen() {
       title="Ayarlar"
       subtitle="Tarama, tanıma ve cihaz içi oturum tercihlerini buradan yönet."
     >
+      <View style={styles.heroCard}>
+        <Text style={styles.heroEyebrow}>KAPALI TEST DURUMU</Text>
+        <Text style={styles.heroTitle}>Runtime görünürlüğü</Text>
+        <Text style={styles.heroText}>
+          Bu build local-first çalışır. Oturum ve premium yüzeyleri testte mock
+          katmanla doğrulanır; burada o runtime durumunu açıkça görürsün.
+        </Text>
+
+        <View style={styles.heroPillRow}>
+          <InfoPill label={authRuntimeLabel} tone={isMockSession ? 'warning' : 'default'} />
+          <InfoPill
+            label={billingRuntimeLabel}
+            tone={isMockPremium ? 'warning' : isPro ? 'success' : 'default'}
+          />
+          <InfoPill label={isPro ? 'Premium aktif' : 'Free plan'} tone={isPro ? 'success' : 'accent'} />
+        </View>
+      </View>
+
+      <View style={styles.runtimeNoticeCard}>
+        <View style={styles.runtimeNoticeTextWrap}>
+          <Text style={styles.runtimeNoticeTitle}>Test modu açıklaması</Text>
+          <Text style={styles.runtimeNoticeText}>
+            {isMockSession || isMockPremium
+              ? 'Bu cihazdaki oturum veya premium durumu gerçek provider yerine mock runtime ile çalışıyor. Amaç kapalı testte ürün akışlarını doğrulamak.'
+              : 'Bu oturum ve premium durumu mock olarak işaretlenmedi.'}
+          </Text>
+        </View>
+      </View>
+
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Hesap</Text>
         <SettingRow label="Ad" value={session?.user.name ?? 'Yerel kullanıcı'} />
         <SettingRow label="E-posta" value={session?.user.email ?? 'Tanımsız'} />
+        <SettingRow label="Oturum türü" value={authRuntimeLabel} />
+        <SettingRow label="Oturum oluşturulma" value={formatDateTime(sessionCreatedAt)} />
       </View>
 
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Premium</Text>
         <SettingRow label="Durum" value={isPro ? 'Aktif' : 'Free'} />
         <SettingRow label="Plan" value={plan} />
+        <SettingRow label="Runtime" value={billingRuntimeLabel} />
+        <SettingRow label="Güncellenme" value={formatDateTime(billingUpdatedAt)} />
         <SettingRow label="Bitiş" value={formattedExpiry} />
       </View>
 
@@ -292,6 +410,94 @@ export function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
+  heroCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: Radius.xl,
+    padding: Spacing.xl,
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
+    ...Shadows.sm,
+  },
+  heroEyebrow: {
+    ...Typography.caption,
+    color: colors.primary,
+    letterSpacing: 1.1,
+    fontWeight: '800',
+  },
+  heroTitle: {
+    ...Typography.titleLarge,
+    color: colors.text,
+  },
+  heroText: {
+    ...Typography.body,
+    color: colors.textSecondary,
+    lineHeight: 22,
+  },
+  heroPillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+    marginTop: Spacing.xs,
+  },
+  infoPill: {
+    minHeight: 30,
+    borderRadius: Radius.full,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
+  },
+  infoPillAccent: {
+    borderColor: 'rgba(59, 130, 246, 0.28)',
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+  },
+  infoPillSuccess: {
+    borderColor: 'rgba(53, 199, 111, 0.28)',
+    backgroundColor: 'rgba(53, 199, 111, 0.12)',
+  },
+  infoPillWarning: {
+    borderColor: 'rgba(245, 158, 11, 0.24)',
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+  },
+  infoPillText: {
+    ...Typography.caption,
+    color: colors.textSecondary,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  infoPillTextAccent: {
+    color: '#60A5FA',
+  },
+  infoPillTextSuccess: {
+    color: colors.primary,
+  },
+  infoPillTextWarning: {
+    color: '#FBBF24',
+  },
+  runtimeNoticeCard: {
+    backgroundColor: colors.card,
+    borderColor: 'rgba(245, 158, 11, 0.22)',
+    borderWidth: 1,
+    borderRadius: Radius.xl,
+    padding: Spacing.lg,
+    marginBottom: Spacing.md,
+    ...Shadows.sm,
+  },
+  runtimeNoticeTextWrap: {
+    gap: 4,
+  },
+  runtimeNoticeTitle: {
+    ...Typography.titleSmall,
+    color: colors.text,
+  },
+  runtimeNoticeText: {
+    ...Typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
+  },
   card: {
     backgroundColor: colors.card,
     borderColor: colors.border,
