@@ -4,21 +4,28 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Image,
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 
 import { Screen } from '../../components/common/Screen';
 import {
+  AssetLibraryDetailCard,
+  type AssetLibraryAction,
+} from '../../components/stamps/AssetLibraryDetailCard';
+import { AssetLibraryItemCard } from '../../components/stamps/AssetLibraryItemCard';
+import {
+  formatAssetLibraryDate,
+  getAssetLibraryHeroCopy,
+  getAssetLibrarySelectionPills,
+} from '../../modules/assets/asset-presentation';
+import {
   createAssetFromImage,
   deleteAsset,
   getAssetsByType,
   getAssetUsageCount,
-  getPreferredAssetPreviewUri,
   hasAssetRestorableOriginal,
   parseAssetMetadata,
   renameAsset,
@@ -32,28 +39,10 @@ import { canUseNativeStampCleanup } from '../../modules/imaging/stamp-cleanup.se
 import { removeFilesIfExist } from '../../modules/storage/file.service';
 import { colors, Radius, Spacing, Typography } from '../../theme';
 
-function formatDate(value: string) {
-  const parsed = new Date(value);
-
-  if (Number.isNaN(parsed.getTime())) {
-    return 'Tarih yok';
-  }
-
-  return parsed.toLocaleString('tr-TR');
-}
-
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message.trim().length > 0
     ? error.message
     : fallback;
-}
-
-function InfoPill({ label }: { label: string }) {
-  return (
-    <View style={styles.infoPill}>
-      <Text style={styles.infoPillText}>{label}</Text>
-    </View>
-  );
 }
 
 function AssetTabButton({
@@ -81,40 +70,11 @@ function AssetTabButton({
   );
 }
 
-function AssetCard({
-  asset,
-  selected,
-  busy,
-  onPress,
-}: {
-  asset: StoredAsset;
-  selected: boolean;
-  busy?: boolean;
-  onPress: () => void;
-}) {
+function HeroPill({ label }: { label: string }) {
   return (
-    <Pressable
-      disabled={busy}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.assetCard,
-        selected && styles.assetCardSelected,
-        busy && styles.disabled,
-        pressed && !busy && styles.pressed,
-      ]}
-    >
-      <Image
-        source={{ uri: getPreferredAssetPreviewUri(asset) }}
-        resizeMode="contain"
-        style={styles.assetImage}
-      />
-
-      <Text numberOfLines={2} style={styles.assetName}>
-        {asset.name}
-      </Text>
-
-      <Text style={styles.assetMeta}>{formatDate(asset.created_at)}</Text>
-    </Pressable>
+    <View style={styles.heroPill}>
+      <Text style={styles.heroPillText}>{label}</Text>
+    </View>
   );
 }
 
@@ -146,6 +106,11 @@ export function StampManagerScreen() {
   const [renameValue, setRenameValue] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+
+  const heroCopy = useMemo(
+    () => getAssetLibraryHeroCopy(activeType, nativeCleanupAvailable),
+    [activeType, nativeCleanupAvailable],
+  );
 
   const selectedAsset = useMemo(
     () => assets.find((asset) => asset.id === selectedAssetId) ?? null,
@@ -389,10 +354,7 @@ export function StampManagerScreen() {
         await removeFilesIfExist([prepared.processedUri, prepared.previewUri]);
       }
     } catch (error) {
-      Alert.alert(
-        'Hata',
-        getErrorMessage(error, 'Arka plan temizlenemedi.'),
-      );
+      Alert.alert('Hata', getErrorMessage(error, 'Arka plan temizlenemedi.'));
     } finally {
       setBusy(false);
     }
@@ -434,10 +396,7 @@ export function StampManagerScreen() {
         await removeFilesIfExist([prepared.processedUri, prepared.previewUri]);
       }
     } catch (error) {
-      Alert.alert(
-        'Hata',
-        getErrorMessage(error, 'Görsel güncellenemedi.'),
-      );
+      Alert.alert('Hata', getErrorMessage(error, 'Görsel güncellenemedi.'));
     } finally {
       setBusy(false);
     }
@@ -453,10 +412,7 @@ export function StampManagerScreen() {
       await restoreAssetOriginal(selectedAsset.id);
       await loadAssets();
     } catch (error) {
-      Alert.alert(
-        'Hata',
-        getErrorMessage(error, 'Orijinal geri yüklenemedi.'),
-      );
+      Alert.alert('Hata', getErrorMessage(error, 'Orijinal geri yüklenemedi.'));
     } finally {
       setBusy(false);
     }
@@ -504,7 +460,7 @@ export function StampManagerScreen() {
       return 'Yok';
     }
 
-    return formatDate(assets[0].created_at);
+    return formatAssetLibraryDate(assets[0].created_at);
   }, [assets]);
 
   const restorable = selectedAsset ? hasAssetRestorableOriginal(selectedAsset) : false;
@@ -515,8 +471,96 @@ export function StampManagerScreen() {
     selectedAssetMetadata.cleanupProvider.trim().length > 0
       ? selectedAssetMetadata.cleanupProvider
       : nativeCleanupAvailable
-      ? 'native hazır'
-      : 'native yok';
+        ? 'native hazır'
+        : 'native yok';
+
+  const selectionPills = useMemo(
+    () =>
+      getAssetLibrarySelectionPills({
+        type: activeType,
+        metadata: selectedAssetMetadata,
+        usageCount: selectedAssetUsageCount,
+        restorable,
+        backgroundRemoved,
+        cleanupModeLabel,
+        cleanupProviderLabel,
+      }),
+    [
+      activeType,
+      backgroundRemoved,
+      cleanupModeLabel,
+      cleanupProviderLabel,
+      restorable,
+      selectedAssetMetadata,
+      selectedAssetUsageCount,
+    ],
+  );
+
+  const detailActionGroups = useMemo<AssetLibraryAction[][]>(() => {
+    if (activeType === 'stamp') {
+      return [
+        [
+          {
+            key: 'optimize',
+            label: 'Optimize et',
+            onPress: handleOptimizeSelected,
+            disabled: busy,
+          },
+          {
+            key: 'cleanup',
+            label: 'Arka planı temizle',
+            onPress: handleCleanupSelectedBackground,
+            disabled: busy,
+          },
+        ],
+        [
+          {
+            key: 'replace',
+            label: 'Görseli değiştir',
+            onPress: handleReplaceSelectedImage,
+            disabled: busy,
+          },
+          {
+            key: 'restore',
+            label: 'Orijinali geri yükle',
+            onPress: handleRestoreOriginalSelected,
+            disabled: busy || !restorable,
+          },
+        ],
+        [
+          {
+            key: 'delete',
+            label: heroCopy.deleteLabel,
+            onPress: handleDeleteSelected,
+            disabled: busy,
+            tone: 'danger',
+          },
+        ],
+      ];
+    }
+
+    return [
+      [
+        {
+          key: 'delete',
+          label: heroCopy.deleteLabel,
+          onPress: handleDeleteSelected,
+          disabled: busy,
+          tone: 'danger',
+        },
+      ],
+    ];
+  }, [
+    activeType,
+    busy,
+    handleCleanupSelectedBackground,
+    handleDeleteSelected,
+    handleOptimizeSelected,
+    handleReplaceSelectedImage,
+    handleRestoreOriginalSelected,
+    heroCopy.deleteLabel,
+    restorable,
+  ]);
 
   return (
     <Screen
@@ -537,36 +581,16 @@ export function StampManagerScreen() {
       </View>
 
       <View style={styles.heroCard}>
-        <Text style={styles.heroTitle}>
-          {activeType === 'stamp' ? 'Kaşe kitaplığı' : 'İmza kitaplığı'}
-        </Text>
-        <Text style={styles.heroText}>
-          {activeType === 'stamp'
-            ? 'Şeffaf PNG en iyi sonucu verir. Native cleanup modülü build içinde varsa taranmış kaşelerde arka plan temizleme de uygulanır.'
-            : 'İmza ekranında kaydettiğin imzalar burada küçük resim olarak görünür. İmza PDF üzerine eklendiğinde editörde tutup sürükleyebilirsin.'}
-        </Text>
+        <Text style={styles.heroTitle}>{heroCopy.title}</Text>
+        <Text style={styles.heroText}>{heroCopy.description}</Text>
 
-        <View style={styles.infoPillRow}>
-          {activeType === 'stamp' ? (
-            <>
-              <InfoPill
-                label={
-                  nativeCleanupAvailable
-                    ? 'Native cleanup hazır'
-                    : 'Native cleanup beklemede'
-                }
-              />
-              <InfoPill label="Yerel-first kaşe kütüphanesi" />
-            </>
-          ) : (
-            <>
-              <InfoPill label="Yerel imza thumbnail kütüphanesi" />
-              <InfoPill label="PDF editörde sürükle-bırak" />
-            </>
-          )}
+        <View style={styles.heroPillRow}>
+          {heroCopy.pills.map((pill) => (
+            <HeroPill key={pill} label={pill} />
+          ))}
         </View>
 
-        {activeType === 'stamp' ? (
+        {heroCopy.primaryActionLabel ? (
           <Pressable
             onPress={handleImportStamp}
             disabled={busy}
@@ -577,7 +601,7 @@ export function StampManagerScreen() {
             ]}
           >
             <Text style={styles.primaryButtonText}>
-              {busy ? 'Kaşe işleniyor...' : 'Yeni kaşe ekle'}
+              {busy ? 'Kaşe işleniyor...' : heroCopy.primaryActionLabel}
             </Text>
           </Pressable>
         ) : null}
@@ -585,9 +609,7 @@ export function StampManagerScreen() {
 
       <View style={styles.summaryCard}>
         <View style={styles.summaryTextBlock}>
-          <Text style={styles.summaryTitle}>
-            Toplam {activeType === 'stamp' ? 'kaşe' : 'imza'}
-          </Text>
+          <Text style={styles.summaryTitle}>{heroCopy.summaryTitle}</Text>
           <Text style={styles.summaryHint}>Son eklenen: {latestAssetDate}</Text>
         </View>
 
@@ -601,193 +623,38 @@ export function StampManagerScreen() {
         </View>
       ) : assets.length === 0 ? (
         <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>
-            Henüz {activeType === 'stamp' ? 'kaşe' : 'imza'} yok
-          </Text>
-          <Text style={styles.emptyText}>
-            {activeType === 'stamp'
-              ? 'Taranmış kaşe veya şeffaf PNG içe aktar. Aynı kaşeyi daha sonra tüm belgelerde tekrar kullanabilirsin.'
-              : 'Bir belge editöründen Yeni imza ekle akışını aç ve kaydet. Kaydedilen imza burada thumbnail olarak görünecek.'}
-          </Text>
+          <Text style={styles.emptyTitle}>{heroCopy.emptyTitle}</Text>
+          <Text style={styles.emptyText}>{heroCopy.emptyText}</Text>
         </View>
       ) : (
         <>
           <View style={styles.grid}>
             {assets.map((asset) => (
-              <AssetCard
+              <AssetLibraryItemCard
                 key={asset.id}
                 asset={asset}
                 selected={asset.id === selectedAssetId}
                 busy={busy}
+                subtitle={formatAssetLibraryDate(asset.created_at)}
                 onPress={() => setSelectedAssetId(asset.id)}
               />
             ))}
           </View>
 
           {selectedAsset ? (
-            <View style={styles.detailCard}>
-              <Text style={styles.detailTitle}>
-                Seçili {activeType === 'stamp' ? 'kaşe' : 'imza'}
-              </Text>
-
-              <Image
-                source={{ uri: getPreferredAssetPreviewUri(selectedAsset) }}
-                resizeMode="contain"
-                style={styles.detailPreview}
-              />
-
-              <View style={styles.infoPillRow}>
-                {activeType === 'stamp' ? (
-                  <>
-                    <InfoPill
-                      label={
-                        selectedAssetUsageCount > 0
-                          ? `${selectedAssetUsageCount} yerleşimde kullanılıyor`
-                          : 'Henüz yerleşimde kullanılmadı'
-                      }
-                    />
-                    <InfoPill label={restorable ? 'Orijinale geri dönebilir' : 'Orijinal aktif'} />
-                    <InfoPill label={backgroundRemoved ? 'Arka plan temizlenmiş' : 'Arka plan temizlenmedi'} />
-                    <InfoPill label={cleanupModeLabel} />
-                    <InfoPill label={`Kaynak: ${cleanupProviderLabel}`} />
-                  </>
-                ) : (
-                  <>
-                    <InfoPill label="İmza thumbnail kayıtlı" />
-                    {typeof selectedAssetMetadata.strokeColor === 'string' ? (
-                      <InfoPill label={`Renk: ${selectedAssetMetadata.strokeColor}`} />
-                    ) : null}
-                    {typeof selectedAssetMetadata.strokeCount === 'number' ? (
-                      <InfoPill label={`${selectedAssetMetadata.strokeCount} stroke`} />
-                    ) : null}
-                  </>
-                )}
-              </View>
-
-              <View style={styles.metaBlock}>
-                <Text style={styles.metaLabel}>Ad</Text>
-                <TextInput
-                  value={renameValue}
-                  onChangeText={setRenameValue}
-                  editable={!busy}
-                  placeholder={activeType === 'stamp' ? 'Kaşe adı' : 'İmza adı'}
-                  placeholderTextColor={colors.textTertiary}
-                  style={styles.nameInput}
-                />
-              </View>
-
-              <View style={styles.metaBlock}>
-                <Text style={styles.metaLabel}>Oluşturulma</Text>
-                <Text style={styles.metaValue}>{formatDate(selectedAsset.created_at)}</Text>
-              </View>
-
-              <View style={styles.metaBlock}>
-                <Text style={styles.metaLabel}>Not</Text>
-                <Text style={styles.metaValue}>
-                  {activeType === 'stamp'
-                    ? 'Bu kaşe editörde sürükle-bırak ile istenen koordinata yerleştirilir ve sonraki belgelerde tekrar kullanılabilir.'
-                    : 'Bu imza, imza ekranında çizilip küçük resim olarak kaydedildi. Belge editöründe seçili imzayı tutup istediğin yere sürükleyebilir ve boyutlandırabilirsin.'}
-                </Text>
-              </View>
-
-              <View style={styles.actionRow}>
-                <Pressable
-                  disabled={busy}
-                  onPress={handleRenameSelected}
-                  style={({ pressed }) => [
-                    styles.secondaryButton,
-                    busy && styles.disabled,
-                    pressed && !busy && styles.pressed,
-                  ]}
-                >
-                  <Text style={styles.secondaryButtonText}>Adı kaydet</Text>
-                </Pressable>
-
-                {activeType === 'stamp' ? (
-                  <Pressable
-                    disabled={busy}
-                    onPress={handleOptimizeSelected}
-                    style={({ pressed }) => [
-                      styles.secondaryButton,
-                      busy && styles.disabled,
-                      pressed && !busy && styles.pressed,
-                    ]}
-                  >
-                    <Text style={styles.secondaryButtonText}>Optimize et</Text>
-                  </Pressable>
-                ) : null}
-              </View>
-
-              {activeType === 'stamp' ? (
-                <>
-                  <View style={styles.actionRow}>
-                    <Pressable
-                      disabled={busy}
-                      onPress={handleCleanupSelectedBackground}
-                      style={({ pressed }) => [
-                        styles.secondaryButton,
-                        busy && styles.disabled,
-                        pressed && !busy && styles.pressed,
-                      ]}
-                    >
-                      <Text style={styles.secondaryButtonText}>Arka planı temizle</Text>
-                    </Pressable>
-
-                    <Pressable
-                      disabled={busy}
-                      onPress={handleReplaceSelectedImage}
-                      style={({ pressed }) => [
-                        styles.secondaryButton,
-                        busy && styles.disabled,
-                        pressed && !busy && styles.pressed,
-                      ]}
-                    >
-                      <Text style={styles.secondaryButtonText}>Görseli değiştir</Text>
-                    </Pressable>
-                  </View>
-
-                  <View style={styles.actionRow}>
-                    <Pressable
-                      disabled={busy || !restorable}
-                      onPress={handleRestoreOriginalSelected}
-                      style={({ pressed }) => [
-                        styles.secondaryButton,
-                        (busy || !restorable) && styles.disabled,
-                        pressed && !busy && restorable && styles.pressed,
-                      ]}
-                    >
-                      <Text style={styles.secondaryButtonText}>Orijinali geri yükle</Text>
-                    </Pressable>
-
-                    <Pressable
-                      disabled={busy}
-                      onPress={handleDeleteSelected}
-                      style={({ pressed }) => [
-                        styles.dangerButton,
-                        busy && styles.disabled,
-                        pressed && !busy && styles.pressed,
-                      ]}
-                    >
-                      <Text style={styles.dangerButtonText}>Sil</Text>
-                    </Pressable>
-                  </View>
-                </>
-              ) : (
-                <View style={styles.actionRow}>
-                  <Pressable
-                    disabled={busy}
-                    onPress={handleDeleteSelected}
-                    style={({ pressed }) => [
-                      styles.dangerButton,
-                      busy && styles.disabled,
-                      pressed && !busy && styles.pressed,
-                    ]}
-                  >
-                    <Text style={styles.dangerButtonText}>İmzayı sil</Text>
-                  </Pressable>
-                </View>
-              )}
-            </View>
+            <AssetLibraryDetailCard
+              title={heroCopy.selectionTitle}
+              asset={selectedAsset}
+              renameValue={renameValue}
+              onChangeRename={setRenameValue}
+              onSaveRename={handleRenameSelected}
+              namePlaceholder={heroCopy.namePlaceholder}
+              createdAtLabel={formatAssetLibraryDate(selectedAsset.created_at)}
+              note={heroCopy.note}
+              pills={selectionPills}
+              actionGroups={detailActionGroups}
+              busy={busy}
+            />
           ) : null}
         </>
       )}
@@ -842,12 +709,12 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     lineHeight: 22,
   },
-  infoPillRow: {
+  heroPillRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.sm,
   },
-  infoPill: {
+  heroPill: {
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
@@ -855,7 +722,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  infoPillText: {
+  heroPillText: {
     ...Typography.caption,
     color: colors.textSecondary,
     fontWeight: '700',
@@ -936,114 +803,6 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: Spacing.md,
     marginBottom: Spacing.lg,
-  },
-  assetCard: {
-    width: '31%',
-    minWidth: 112,
-    backgroundColor: colors.card,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: Spacing.md,
-    gap: Spacing.sm,
-  },
-  assetCardSelected: {
-    borderColor: colors.primary,
-  },
-  assetImage: {
-    width: '100%',
-    height: 88,
-  },
-  assetName: {
-    ...Typography.bodySmall,
-    color: colors.text,
-    fontWeight: '700',
-  },
-  assetMeta: {
-    ...Typography.caption,
-    color: colors.textTertiary,
-  },
-  detailCard: {
-    backgroundColor: colors.card,
-    borderRadius: Radius.xl,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: Spacing.lg,
-    gap: Spacing.md,
-  },
-  detailTitle: {
-    ...Typography.titleLarge,
-    color: colors.text,
-  },
-  detailPreview: {
-    width: '100%',
-    height: 180,
-    borderRadius: Radius.lg,
-    backgroundColor: colors.surfaceElevated,
-  },
-  metaBlock: {
-    gap: 6,
-  },
-  metaLabel: {
-    ...Typography.bodySmall,
-    color: colors.textSecondary,
-    fontWeight: '700',
-  },
-  metaValue: {
-    ...Typography.body,
-    color: colors.text,
-    lineHeight: 22,
-  },
-  nameInput: {
-    minHeight: 48,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceElevated,
-    color: colors.text,
-    paddingHorizontal: Spacing.md,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Spacing.sm,
-  },
-  secondaryButton: {
-    flex: 1,
-    minHeight: 46,
-    minWidth: 140,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceElevated,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: Spacing.md,
-  },
-  secondaryButtonText: {
-    ...Typography.bodySmall,
-    color: colors.text,
-    fontWeight: '800',
-  },
-  dangerButton: {
-    flex: 1,
-    minHeight: 46,
-    minWidth: 140,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: '#4B2632',
-    backgroundColor: '#2A1620',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: Spacing.md,
-  },
-  dangerButtonText: {
-    ...Typography.bodySmall,
-    color: '#FCA5A5',
-    fontWeight: '800',
-  },
-  disabled: {
-    opacity: 0.55,
   },
   pressed: {
     opacity: 0.92,
